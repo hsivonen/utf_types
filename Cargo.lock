@@ -4,4 +4,4 @@ version = 3
 
 [[package]]
 name = "utf_types"
-version = "0.0.0-reserved"
+version = "1.0.0"

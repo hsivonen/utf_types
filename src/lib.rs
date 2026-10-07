@@ -14,7 +14,7 @@
 // See the Licenses for the specific language governing permissions and
 // limitations under the Licenses.
 
-//! Placeholder for: Types for UTF-8 and UTF-16 code units and code unit sequences
+//! Types for UTF-8 and UTF-16 code units and code unit sequences
 
-pub mod utf8;
 pub mod utf16;
+pub mod utf8;

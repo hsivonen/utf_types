@@ -1,9 +1,9 @@
 [package]
 name = "utf_types"
-version = "0.0.0-reserved"
+version = "1.0.0"
 rust-version = "1.81" # core::error::Error
 edition = "2021"
-description = "Placeholder for: Types for UTF-8 and UTF-16 code units and code unit sequences"
+description = "Types for UTF-8 and UTF-16 code units and code unit sequences"
 authors = ["Henri Sivonen <hsivonen@hsivonen.fi>"]
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
