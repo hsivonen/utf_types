@@ -122,19 +122,6 @@ const fn unconstrained_continuation(continuation: u8) -> bool {
     in_inclusive_range8(continuation, 0x80, 0xBF)
 }
 
-/// `true` iff `first` is in the ASCII range.
-#[inline(always)]
-const fn single_byte(first: u8) -> bool {
-    first < 0x80
-}
-
-/// `true` iff `first` is a valid lead byte for a multi-byte
-/// sequence.
-#[inline(always)]
-const fn multi_byte_lead(first: u8) -> bool {
-    in_inclusive_range8(first, 0xC2, 0xF4)
-}
-
 /// `true` iff `first` is a valid lead byte for a two-byte
 /// sequence.
 #[inline(always)]
@@ -225,167 +212,6 @@ const fn table_lookup(first: u8, second: u8) -> u8 {
     UTF8_DATA.table[second as usize] & UTF8_DATA.table[first as usize + 0x80]
 }
 
-/// Converts a valid two-byte UTF-8 sequence to a `char`.
-///
-/// # Panics
-///
-/// If the input does not actually represent a valid two-byte
-/// UTF-8 sequence, this function panics if debug assertions
-/// are enabled. If debug assertions are disabled, the output
-/// is bogus but in the `char` range, which is why this function
-/// isn't marked `unsafe`.
-#[inline(always)]
-const fn two_bytes_to_char(first: u8, second: u8) -> char {
-    debug_assert!(two_byte(first, second));
-    // SAFETY: We take the low 5 bits of `first` and the low 6 bits of `second`,
-    // which satisfies the precondition of `bits_to_char`.
-    unsafe { bits_to_char(low_five(first), low_six(second)) }
-}
-
-/// Converts a valid three-byte UTF-8 sequence to a `char`.
-///
-/// # Safety
-///
-/// The three bytes must form a valid UTF-8 sequence.
-///
-/// # Panics
-///
-/// If the input does not actually represent a valid three-byte
-/// UTF-8 sequence, this function panics if debug assertions
-/// are enabled.
-#[inline(always)]
-unsafe fn three_bytes_to_char(first: u8, second: u8, third: u8) -> char {
-    debug_assert!(three_byte(first, second, third));
-    let scalar = (low_four(first) << 12) | (low_six(second) << 6) | low_six(third);
-    debug_assert!(char::from_u32(scalar).is_some());
-    // SAFETY: We distribute the bits in a way that formed
-    // a valid scalar on the assumption that the input
-    // satisfied the safety precondition.
-    unsafe { char::from_u32_unchecked(scalar) }
-}
-
-/// Converts a valid four-byte UTF-8 sequence to a `char`.
-///
-/// # Safety
-///
-/// The four bytes must form a valid UTF-8 sequence.
-///
-/// # Panics
-///
-/// If the input does not actually represent a valid four-byte
-/// UTF-8 sequence, this function panics if debug assertions
-/// are enabled.
-#[inline(always)]
-unsafe fn four_bytes_to_char(first: u8, second: u8, third: u8, fourth: u8) -> char {
-    debug_assert!(four_byte(first, second, third, fourth));
-    let scalar = (low_three(first) << 18)
-        | (low_six(second) << 12)
-        | (low_six(third) << 6)
-        | low_six(fourth);
-    debug_assert!(char::from_u32(scalar).is_some());
-    // SAFETY: We distribute the bits in a way that formed
-    // a valid scalar on the assumption that the input
-    // satisfied the safety precondition.
-    unsafe { char::from_u32_unchecked(scalar) }
-}
-
-/// Returns the low six bits of the input.
-///
-/// # Panics
-///
-/// If debug assertions are enabled, panics if `continuation`
-/// is not an UTF-8 continuation byte.
-#[inline(always)]
-const fn low_six(continuation: u8) -> u32 {
-    debug_assert!(unconstrained_continuation(continuation));
-    (continuation & 0b111_111) as u32
-}
-
-/// Returns the low five bits of the input.
-///
-/// # Panics
-///
-/// If debug assertions are enabled, panics if `first`
-/// is not a lead byte for a two-byte UTF-8 sequence.
-#[inline(always)]
-const fn low_five(first: u8) -> u32 {
-    debug_assert!(two_byte_lead(first));
-    (first & 0b11_111) as u32
-}
-
-/// Returns the low four bits of the input.
-///
-/// # Panics
-///
-/// If debug assertions are enabled, panics if `first`
-/// is not a lead byte for a three-byte UTF-8 sequence.
-#[inline(always)]
-const fn low_four(first: u8) -> u32 {
-    debug_assert!(three_byte_lead(first));
-    (first & 0b1111) as u32
-}
-
-/// Returns the low three bits of the input.
-///
-/// # Panics
-///
-/// If debug assertions are enabled, panics if `first`
-/// is not a lead byte for a four-byte UTF-8 sequence.
-#[inline(always)]
-const fn low_three(first: u8) -> u32 {
-    debug_assert!(four_byte_lead(first));
-    (first & 0b111) as u32
-}
-
-/// Combines the non-tag bits from the first and second byte
-/// of a three-byte UTF-8 sequence.
-///
-/// # Panics
-///
-/// If debug assertions are enabled, panics if `first`
-/// is not a lead byte for a three-byte UTF-8 sequence
-/// of if `second` isn't a valid continuation for that
-/// lead byte.
-#[inline(always)]
-const fn high_ten(first: u8, second: u8) -> u32 {
-    debug_assert!(three_byte_lead(first));
-    debug_assert!(two_byte_prefix(first, second));
-    (low_four(first) << 6) | low_six(second)
-}
-
-/// Converts the non-tag bits of a two-byte or a three-byte UTF-8 sequence to
-/// a `char`.
-///
-/// `high_ten` represents either:
-///  * the 5 least-significant bits of the lead byte of a valid two-byte UTF-8 sequence
-///  * the ten non-tag bits gathered from the first and second bytes of a valid three-byte
-///    UTF-8 sequence.
-///
-/// `low_six` representes the 6 least-significant bytes of the last byte of
-/// either a three-byte or two-byte UTF-8 sequence.
-///
-/// # Safety
-///
-/// The bits other than the 10 least-significant bits of `high_then` must
-/// be zeros. The bits other than the 6 least-significant bits of `low_six`
-/// must be zeros. `high_ten` must not a value that would cause the combination
-/// of `high_ten` and `low_six` to form a surrogate code point.
-///
-/// # Panics
-///
-/// With debug assertions enabled panics if the safety invariant is violated.
-#[inline(always)]
-const unsafe fn bits_to_char(high_ten: u32, low_six: u32) -> char {
-    // Can't use `debug_assert_eq!` in `const`.
-    debug_assert!(high_ten & !0b11111_11111 == 0);
-    debug_assert!(low_six & !0b111_111 == 0);
-    let scalar = (high_ten << 6) | low_six;
-    debug_assert!(char::from_u32(scalar).is_some());
-    // SAFETY: We are relying on the caller conforming
-    // to the documented safety invariant.
-    unsafe { char::from_u32_unchecked(scalar) }
-}
-
 #[inline(always)]
 const fn in_inclusive_range8(i: u8, start: u8, end: u8) -> bool {
     i.wrapping_sub(start) <= (end - start)
@@ -393,6 +219,7 @@ const fn in_inclusive_range8(i: u8, start: u8, end: u8) -> bool {
 
 trait Seal {}
 
+#[allow(private_bounds)] // allow sealing
 pub trait Utf8ByteSequence: Seal + Copy + Clone {
     fn to_char(self) -> char;
     fn as_str(&self) -> &str;
@@ -414,8 +241,8 @@ macro_rules! byte_methods {
     ) => {
         /// Whether `byte` is in range for this type.
         #[inline(always)]
-        const fn is(byte: u8) -> bool {
-            byte.is_ascii()
+        const fn is($byte: u8) -> bool {
+            $check
         }
 
         $(#[$unchecked_meta])*
@@ -580,6 +407,12 @@ pub enum Ascii {
 }
 
 impl Ascii {
+    /// Minimum possible value.
+    pub const MIN: Self = Self::B00;
+
+    /// Maximum possible value.
+    pub const MAX: Self = Self::B7f;
+
     byte_methods!(
         ascii,
         byte.is_ascii(),
@@ -769,6 +602,12 @@ pub enum NonAscii {
 }
 
 impl NonAscii {
+    /// Minimum possible value.
+    pub const MIN: Self = Self::B80;
+
+    /// Maximum possible value.
+    pub const MAX: Self = Self::Bff;
+
     byte_methods!(
         non_ascii,
         !byte.is_ascii(),
@@ -881,9 +720,15 @@ pub enum UnconstrainedContinuation {
 }
 
 impl UnconstrainedContinuation {
+    /// Minimum possible value.
+    pub const MIN: Self = Self::B80;
+
+    /// Maximum possible value.
+    pub const MAX: Self = Self::Bbf;
+
     byte_methods!(
         continuation,
-        (continuation >> 6) == 0b10,
+        (byte >> 6) == 0b10,
         /// Unchecked constructor
         ///
         /// # Safety
@@ -923,6 +768,93 @@ impl UnconstrainedContinuation {
     }
 }
 
+/// A lead byte for a multibyte sequence (two-byte, three-byte, or
+/// four-byte).
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(u8)]
+pub enum LeadForMultiByte {
+    Bc2 = 0xc2,
+    Bc3 = 0xc3,
+    Bc4 = 0xc4,
+    Bc5 = 0xc5,
+    Bc6 = 0xc6,
+    Bc7 = 0xc7,
+    Bc8 = 0xc8,
+    Bc9 = 0xc9,
+    Bca = 0xca,
+    Bcb = 0xcb,
+    Bcc = 0xcc,
+    Bcd = 0xcd,
+    Bce = 0xce,
+    Bcf = 0xcf,
+    Bd0 = 0xd0,
+    Bd1 = 0xd1,
+    Bd2 = 0xd2,
+    Bd3 = 0xd3,
+    Bd4 = 0xd4,
+    Bd5 = 0xd5,
+    Bd6 = 0xd6,
+    Bd7 = 0xd7,
+    Bd8 = 0xd8,
+    Bd9 = 0xd9,
+    Bda = 0xda,
+    Bdb = 0xdb,
+    Bdc = 0xdc,
+    Bdd = 0xdd,
+    Bde = 0xde,
+    Bdf = 0xdf,
+    Be0 = 0xe0,
+    Be1 = 0xe1,
+    Be2 = 0xe2,
+    Be3 = 0xe3,
+    Be4 = 0xe4,
+    Be5 = 0xe5,
+    Be6 = 0xe6,
+    Be7 = 0xe7,
+    Be8 = 0xe8,
+    Be9 = 0xe9,
+    Bea = 0xea,
+    Beb = 0xeb,
+    Bec = 0xec,
+    Bed = 0xed,
+    Bee = 0xee,
+    Bef = 0xef,
+    Bf0 = 0xf0,
+    Bf1 = 0xf1,
+    Bf2 = 0xf2,
+    Bf3 = 0xf3,
+    Bf4 = 0xf4,
+}
+
+impl LeadForMultiByte {
+    /// Minimum possible value.
+    pub const MIN: Self = Self::Bc2;
+
+    /// Maximum possible value.
+    pub const MAX: Self = Self::Bf4;
+
+    byte_methods!(
+        lead,
+        in_inclusive_range8(byte, 0xC2, 0xF4),
+        /// Unchecked constructor
+        ///
+        /// # Safety
+        ///
+        /// `lead` must be in the range 0xC2 to 0xF4, inclusive.
+        ///
+        /// # Panics
+        ///
+        /// When debug assertions are enabled, panics if the safety invariant
+        /// is not upheld.
+        ,
+        /// Fallible constructor
+        ///
+        /// `Ok` if in the range 0xC2 to 0xF4, inclusive, and `Err` otherwise.
+        ,
+        byte,
+    );
+}
+
 /// A lead byte for a two-byte UTF-8 sequence (0xC2 to 0xDF, inclusive)
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
@@ -960,9 +892,15 @@ pub enum LeadForTwoByte {
 }
 
 impl LeadForTwoByte {
+    /// Minimum possible value.
+    pub const MIN: Self = Self::Bc2;
+
+    /// Maximum possible value.
+    pub const MAX: Self = Self::Bdf;
+
     byte_methods!(
         lead,
-        in_inclusive_range8(lead, 0xC2, 0xDF),
+        in_inclusive_range8(byte, 0xC2, 0xDF),
         /// Unchecked constructor
         ///
         /// # Safety
@@ -1025,9 +963,15 @@ pub enum LeadForThreeByte {
 }
 
 impl LeadForThreeByte {
+    /// Minimum possible value.
+    pub const MIN: Self = Self::Be0;
+
+    /// Maximum possible value.
+    pub const MAX: Self = Self::Bef;
+
     byte_methods!(
         lead,
-        in_inclusive_range8(lead, 0xE0, 0xEF),
+        in_inclusive_range8(byte, 0xE0, 0xEF),
         /// Unchecked constructor
         ///
         /// # Safety
@@ -1079,9 +1023,15 @@ pub enum LeadForFourByte {
 }
 
 impl LeadForFourByte {
+    /// Minimum possible value.
+    pub const MIN: Self = Self::Bf0;
+
+    /// Maximum possible value.
+    pub const MAX: Self = Self::Bf4;
+
     byte_methods!(
         lead,
-        in_inclusive_range8(lead, 0xF0, 0xF4),
+        in_inclusive_range8(byte, 0xF0, 0xF4),
         /// Unchecked constructor
         ///
         /// # Safety
@@ -1131,6 +1081,12 @@ pub struct TwoByteSequence {
 }
 
 impl TwoByteSequence {
+    /// Checks whether the bytes are valid for this kind of sequence.
+    #[inline(always)]
+    pub const fn is(first: u8, second: u8) -> bool {
+        LeadForTwoByte::is(first) && UnconstrainedContinuation::is(second)
+    }
+
     /// Unchecked constructor
     ///
     /// # Safety
@@ -1143,7 +1099,7 @@ impl TwoByteSequence {
     /// is not upheld.
     #[inline(always)]
     pub const unsafe fn new_unchecked(first: u8, second: u8) -> Self {
-        debug_assert!(two_byte(first, second));
+        debug_assert!(Self::is(first, second));
         Self {
             bytes: [first, second],
         }
@@ -1154,7 +1110,7 @@ impl TwoByteSequence {
     /// `Ok` if `first` and `second` form a two-byte UTF-8 sequence and `Err` otherwise.
     #[inline(always)]
     pub const fn try_new(first: u8, second: u8) -> Result<Self, Utf8ByteError> {
-        if two_byte(first, second) {
+        if Self::is(first, second) {
             // SAFETY: We checked the safety invariant immediately above.
             Ok(unsafe { Self::new_unchecked(first, second) })
         } else {
@@ -1180,7 +1136,13 @@ impl Seal for TwoByteSequence {}
 impl Utf8ByteSequence for TwoByteSequence {
     #[inline(always)]
     fn to_char(self) -> char {
-        two_bytes_to_char(self.bytes[0], self.bytes[1])
+        let (first, second) = self.to_typed_bytes();
+        let scalar = (first.low_five_u32() << 6) | second.low_six_u32();
+        debug_assert!(char::from_u32(scalar).is_some());
+        // SAFETY: We distribute the bits in a way that forms
+        // a valid scalar on the assumption that the bytes represent
+        // a well-formed three-byte UTF-8 byte sequence.
+        unsafe { char::from_u32_unchecked(scalar) }
     }
 
     #[inline(always)]
@@ -1259,9 +1221,8 @@ impl Utf8ByteSequence for ThreeByteSequence {
     #[inline(always)]
     fn to_char(self) -> char {
         let (first, second, third) = self.to_typed_bytes();
-        let scalar = (first.low_four_u32() << 12)
-            | (second.low_six_u32() << 6)
-            | third.low_six_u32();
+        let scalar =
+            (first.low_four_u32() << 12) | (second.low_six_u32() << 6) | third.low_six_u32();
         debug_assert!(char::from_u32(scalar).is_some());
         // SAFETY: We distribute the bits in a way that forms
         // a valid scalar on the assumption that the bytes represent
@@ -1376,7 +1337,7 @@ impl Utf8ByteSequence for FourByteSequence {
 mod tests {
 
     fn two_byte_prefix_reference(first: u8, second: u8) -> bool {
-        if !super::multi_byte_lead(first) {
+        if !super::LeadForMultiByte::is(first) {
             return false;
         }
         let (lower_bound, upper_bound) = match first {
@@ -1401,3 +1362,31 @@ mod tests {
         }
     }
 }
+
+/*
+
+#[unsafe(no_mangle)]
+pub fn two_byte(first: u8, second: u8) -> bool {
+    two_byte_lead(first) && unconstrained_continuation(second)
+}
+
+#[unsafe(no_mangle)]
+pub fn three_byte(first: u8, second: u8, third: u8) -> bool {
+    // Shifting masked `first` by 4 instead of 8 results
+    // in a number to compare with that fits in an immediate
+    // on aarch64. This is one instruction shorter on aarch64
+    // that shifting the other part left the way it's shifted
+    // in the four-byte case.
+    ((first as u16 & 0b1111_0000) << 4) |
+    ((table_lookup(first, second) | (third >> 6)) as u16) == 0b1110_0000_0010
+}
+
+#[unsafe(no_mangle)]
+pub fn four_byte(first: u8, second: u8, third: u8, fourth: u8) -> bool {
+    // We shift the combination of table lookup and third left, instead
+    // of the other way round to make the comparison constant fit in
+    // an immediate on aarch64.
+    (fourth >> 6) as u16 | (first & 0b1111_1000) as u16 |
+    (((table_lookup(first, second) | (third >> 6)) as u16) << 8) == 0b10_1111_0010
+}
+*/
