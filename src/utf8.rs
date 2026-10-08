@@ -1118,6 +1118,26 @@ impl TwoByteSequence {
         }
     }
 
+    /// Fallible constructor with prepared bytes
+    ///
+    /// `Ok` if the prepared bytes form a two-byte UTF-8 sequence and `Err` otherwise.
+    #[inline(always)]
+    pub const fn try_new_with_prepared(prepared: PreparedTwoBytes) -> Result<Self, Utf8ByteError> {
+        // The low two bits of `check` are always zero, so we can shift it right by two
+        // without data loss.
+        // For `first` to be a two-byte lead byte, its top 3 bits have to be 110.
+        // For `second` to be a continuation, `check` has to be zero.
+        // We can let the third bit from the top overlap: It has to be zero for
+        // both checks, so when we OR the checks together, if both sides succeed,
+        // and it can be one only if either side fails.
+        if ((prepared.first & 0b1110_0000) | (prepared.check >> 2)) == 0b1100_0000 {
+            // SAFETY: We checked the safety invariant immediately above.
+            Ok(unsafe { Self::new_unchecked(prepared.first, prepared.second) })
+        } else {
+            Err(Utf8ByteError)
+        }
+    }
+
     /// Convert to typed byte tuple.
     #[inline(always)]
     pub const fn to_typed_bytes(self) -> (LeadForTwoByte, UnconstrainedContinuation) {
@@ -1190,6 +1210,33 @@ impl ThreeByteSequence {
         if three_byte(first, second, third) {
             // SAFETY: We checked the safety invariant immediately above.
             Ok(unsafe { Self::new_unchecked(first, second, third) })
+        } else {
+            Err(Utf8ByteError)
+        }
+    }
+
+    /// Fallible constructor with prepared bytes
+    ///
+    /// `Ok` if the prepared bytes form a three-byte UTF-8 sequence and `Err` otherwise.
+    #[inline(always)]
+    pub const fn try_new_with_prepared(
+        prepared: PreparedThreeBytes,
+    ) -> Result<Self, Utf8ByteError> {
+        // The top four bits of `first` have to be 1110 for `first` to
+        // be a valid three-byte lead byte.
+        // `check` must be 0b10 for `second` and `third` to be
+        // contextually valid continuations assuming that `first`
+        // is a three-byte lead byte.
+        // Shifting masked `first` by 4 instead of 8 results
+        // in a number to compare with that fits in an immediate
+        // on aarch64. This is one instruction shorter on aarch64
+        // than shifting the other part left the way it's shifted
+        // in the four-byte case.
+        if ((((prepared.first & 0b1111_0000) as u16) << 4) | (prepared.check as u16))
+            == 0b1110_0000_0010
+        {
+            // SAFETY: We checked the safety invariant immediately above.
+            Ok(unsafe { Self::new_unchecked(prepared.first, prepared.second, prepared.third) })
         } else {
             Err(Utf8ByteError)
         }
@@ -1285,6 +1332,39 @@ impl FourByteSequence {
         }
     }
 
+    /// Fallible constructor with prepared bytes
+    ///
+    /// `Ok` if the prepared bytes and `fourth` form a four-byte UTF-8 sequence and `Err` otherwise.
+    #[inline(always)]
+    pub const fn try_new_with_prepared(
+        prepared: PreparedThreeBytes,
+        fourth: u8,
+    ) -> Result<Self, Utf8ByteError> {
+        // The top five bits of `first` have to be 11110 for `first` to
+        // be a valid four-byte lead byte.
+        // `check` must be 0b10 for `second` and `third` to be
+        // contextually valid continuations assuming that `first`
+        // is a four-byte lead byte.
+        // The top two bits of `fourth` must be 10 for `fourth` to
+        // be a valid contination.
+        // We shift `check` left, instead of the other way round to
+        // make the comparison constant fit in an immediate on aarch64.
+        // When the top two bits of `fourth` are shifted to be the low
+        // two bits, they don't overlap with the top five bits from
+        // `first`.
+        if (((prepared.check as u16) << 8)
+            | (((prepared.first & 0b1111_1000) | (fourth >> 6)) as u16))
+            == 0b10_1111_0010
+        {
+            // SAFETY: We checked the safety invariant immediately above.
+            Ok(unsafe {
+                Self::new_unchecked(prepared.first, prepared.second, prepared.third, fourth)
+            })
+        } else {
+            Err(Utf8ByteError)
+        }
+    }
+
     /// Convert to typed byte tuple.
     #[inline(always)]
     pub const fn to_typed_bytes(
@@ -1333,8 +1413,125 @@ impl Utf8ByteSequence for FourByteSequence {
     }
 }
 
+/// Wrapper for the first two bytes and a precomputed value.
+#[derive(Debug, Clone, Copy)]
+pub struct PreparedTwoBytes {
+    first: u8,
+    second: u8,
+    check: u8,
+}
+
+impl PreparedTwoBytes {
+    #[inline(always)]
+    pub const fn new(first: u8, second: u8) -> Self {
+        Self {
+            first,
+            second,
+            check: table_lookup(first, second),
+        }
+    }
+
+    /// If the caller has already determined that the first byte is not ASCII,
+    /// this method returns `true` iff the two bytes form a prefix of a
+    /// well-formed multi-byte UTF-8 sequence.
+    ///
+    /// If the first byte is ASCII, the return value is garbage.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The caller may rely on the above-stated property for safety if it has
+    /// determined that the first byte is not ASCII.
+    ///
+    /// # Panics
+    ///
+    /// With debug assertions enabled, panics if the first byte is ASCII.
+    #[inline(always)]
+    pub const fn sequence_prefix_assuming_first_not_ascii(self) -> bool {
+        debug_assert!(!Ascii::is(self.first));
+        self.check == 0
+    }
+
+    /// `true` iff the two bytes form a prefix of a
+    /// well-formed multi-byte UTF-8 sequence.
+    #[inline(always)]
+    pub const fn sequence_prefix(self) -> bool {
+        // The low two bits of `check` are zero in any case.
+        // We need to exclude the case where `first` is ASCII.
+        // To do that, invert its bits (so that the highest
+        // bit becomes one if `first` was ASCII) and then
+        // shift the highest bit to the lowest position.
+        ((!self.first) >> 7) | self.check == 0
+    }
+}
+
+/// Wrapper for the first three bytes and a precomputed value.
+#[derive(Debug, Clone, Copy)]
+pub struct PreparedThreeBytes {
+    first: u8,
+    second: u8,
+    third: u8,
+    check: u8,
+}
+
+impl PreparedThreeBytes {
+    #[inline(always)]
+    pub const fn new(first: u8, second: u8, third: u8) -> Self {
+        Self::new_with_prepared(PreparedTwoBytes::new(first, second), third)
+    }
+
+    #[inline(always)]
+    pub const fn new_with_prepared(prepared: PreparedTwoBytes, third: u8) -> Self {
+        Self {
+            first: prepared.first,
+            second: prepared.second,
+            third,
+            check: prepared.check | (third >> 6),
+        }
+    }
+
+    /// If the caller has already determined that the first byte is not ASCII
+    /// and that the first two bytes do not form a well-formed two-byte UTF-8
+    /// sequence, this method returns `true` iff the three bytes form a prefix of a
+    /// well-formed three-byte or four-byte UTF-8 sequence.
+    ///
+    /// If the first byte is ASCII or if the first two bytes form a well-formed
+    /// two-byte UTF-8 sequence, the return value is garbage.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The caller may rely on the above-stated property for safety if it has
+    /// determined that the first byte is not ASCII and that the first two
+    /// bytes don't form a well-formed two-byte UTF-8 sequence.
+    ///
+    /// # Panics
+    ///
+    /// With debug assertions enabled, panics if the first byte is ASCII or
+    /// if the first two bytes form a well-formed two-byte UTF-8 sequence.
+    #[inline(always)]
+    pub const fn sequence_prefix_assuming_not_well_formed_single_or_two_byte(self) -> bool {
+        debug_assert!(!Ascii::is(self.first));
+        debug_assert!(!TwoByteSequence::is(self.first, self.second));
+        self.check == 0b10
+    }
+
+    /// Return `true` iff these three bytes represent a three-byte
+    /// prefix of a well-formed four-byte UTF-8 sequence.
+    #[inline(always)]
+    pub const fn prefix_of_four_byte(self) -> bool {
+        // The top five bits of `first` have to be 11110 for `first` to
+        // be a valid four-byte lead byte.
+        // `check` must be 0b10 for `second` and `third` to be
+        // contextually valid continuations assuming that `first`
+        // is a four-byte lead byte.
+        // We shift `check` left to use the structure of the full
+        // four-byte check.
+        (((self.check as u16) << 8) | ((self.first & 0b1111_1000) as u16)) == 0b10_1111_0000
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{LeadForTwoByte, PreparedThreeBytes, PreparedTwoBytes};
 
     fn two_byte_prefix_reference(first: u8, second: u8) -> bool {
         if !super::LeadForMultiByte::is(first) {
@@ -1350,43 +1547,98 @@ mod tests {
         super::in_inclusive_range8(second, lower_bound, upper_bound)
     }
 
+    fn three_byte_prefix_reference(first: u8, second: u8, third: u8) -> bool {
+        if !super::LeadForMultiByte::is(first) {
+            return false;
+        }
+        if super::LeadForTwoByte::is(first) {
+            return false;
+        }
+        if !super::UnconstrainedContinuation::is(third) {
+            return false;
+        }
+        let (lower_bound, upper_bound) = match first {
+            0xE0 => (0xA0, 0xBF),
+            0xED => (0x80, 0x9F),
+            0xF0 => (0x90, 0xBF),
+            0xF4 => (0x80, 0x8F),
+            _ => (0x80, 0xBF),
+        };
+        super::in_inclusive_range8(second, lower_bound, upper_bound)
+    }
+
+    fn prefix_of_four_byte_reference(first: u8, second: u8, third: u8) -> bool {
+        if !super::LeadForFourByte::is(first) {
+            return false;
+        }
+        if !super::UnconstrainedContinuation::is(third) {
+            return false;
+        }
+        let (lower_bound, upper_bound) = match first {
+            0xE0 => (0xA0, 0xBF),
+            0xED => (0x80, 0x9F),
+            0xF0 => (0x90, 0xBF),
+            0xF4 => (0x80, 0x8F),
+            _ => (0x80, 0xBF),
+        };
+        super::in_inclusive_range8(second, lower_bound, upper_bound)
+    }
+
     #[test]
     fn test_two_byte_prefix() {
-        for first in 0x80..=0xFF {
+        for first in 0..=0xFF {
             for second in 0..0xFF {
+                let prepared = PreparedTwoBytes::new(first, second);
                 assert_eq!(
-                    super::two_byte_prefix(first, second),
+                    prepared.sequence_prefix(),
                     two_byte_prefix_reference(first, second)
                 );
             }
         }
     }
-}
 
-/*
+    #[test]
+    fn test_two_byte_prefix_first_not_ascii() {
+        for first in 0x80..=0xFF {
+            for second in 0..0xFF {
+                let prepared = PreparedTwoBytes::new(first, second);
+                assert_eq!(
+                    prepared.sequence_prefix_assuming_first_not_ascii(),
+                    two_byte_prefix_reference(first, second)
+                );
+            }
+        }
+    }
 
-#[unsafe(no_mangle)]
-pub fn two_byte(first: u8, second: u8) -> bool {
-    two_byte_lead(first) && unconstrained_continuation(second)
-}
+    #[test]
+    fn test_three_byte_prefix_assuming_not_well_formed_single_or_two_byte() {
+        for first in 0x80..=0xFF {
+            for second in 0..0xFF {
+                for third in 0..0xFF {
+                    let prepared = PreparedThreeBytes::new(first, second, third);
+                    assert_eq!(
+                        !LeadForTwoByte::is(first)
+                            && prepared
+                                .sequence_prefix_assuming_not_well_formed_single_or_two_byte(),
+                        three_byte_prefix_reference(first, second, third)
+                    );
+                }
+            }
+        }
+    }
 
-#[unsafe(no_mangle)]
-pub fn three_byte(first: u8, second: u8, third: u8) -> bool {
-    // Shifting masked `first` by 4 instead of 8 results
-    // in a number to compare with that fits in an immediate
-    // on aarch64. This is one instruction shorter on aarch64
-    // that shifting the other part left the way it's shifted
-    // in the four-byte case.
-    ((first as u16 & 0b1111_0000) << 4) |
-    ((table_lookup(first, second) | (third >> 6)) as u16) == 0b1110_0000_0010
+    #[test]
+    fn test_prefix_of_four_byte() {
+        for first in 0..=0xFF {
+            for second in 0..0xFF {
+                for third in 0..0xFF {
+                    let prepared = PreparedThreeBytes::new(first, second, third);
+                    assert_eq!(
+                        prepared.prefix_of_four_byte(),
+                        prefix_of_four_byte_reference(first, second, third)
+                    );
+                }
+            }
+        }
+    }
 }
-
-#[unsafe(no_mangle)]
-pub fn four_byte(first: u8, second: u8, third: u8, fourth: u8) -> bool {
-    // We shift the combination of table lookup and third left, instead
-    // of the other way round to make the comparison constant fit in
-    // an immediate on aarch64.
-    (fourth >> 6) as u16 | (first & 0b1111_1000) as u16 |
-    (((table_lookup(first, second) | (third >> 6)) as u16) << 8) == 0b10_1111_0010
-}
-*/
