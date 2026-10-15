@@ -241,7 +241,7 @@ macro_rules! byte_methods {
     ) => {
         /// Whether `byte` is in range for this type.
         #[inline(always)]
-        const fn is($byte: u8) -> bool {
+        pub const fn is($byte: u8) -> bool {
             $check
         }
 
