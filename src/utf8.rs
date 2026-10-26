@@ -113,12 +113,21 @@ const fn table_lookup(first: u8, second: u8) -> u8 {
     UTF8_DATA.table[second as usize] & UTF8_DATA.table[first as usize + 0x80]
 }
 
+/// For making sure that reviewing this file is sufficient for
+/// reviewing the implementations of `Utf8ByteSequence`.
 trait Seal {}
 
-/// Common output conversions for all four UTF-8 byte sequences. 
+/// Common output conversions for all four UTF-8 byte sequences.
 #[allow(private_bounds)] // allow sealing
 pub trait Utf8ByteSequence: Seal + Copy + Clone {
+    /// Convert the byte sequence to `char`
     fn to_char(self) -> char;
+
+    /// View the byte sequence as `&str`
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The caller may rely on the length being `1..=4`.
     fn as_str(&self) -> &str;
 }
 
