@@ -19,7 +19,7 @@
 use core::fmt::Formatter;
 use core::num::NonZeroU16;
 
-/// View `&[Surrogate]` as `&[u16]
+/// View `&[Surrogate]` as `&[u16]`
 #[inline(always)]
 const fn cast_slice(s: &[Surrogate]) -> &[u16] {
     // SAFETY: It's safe to view `repr(transparent)` of
@@ -28,7 +28,7 @@ const fn cast_slice(s: &[Surrogate]) -> &[u16] {
 }
 
 /// A type for signaling UTF-16 errors.
-#[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 #[non_exhaustive]
 pub struct Utf16CodeUnitError;
 
@@ -169,7 +169,7 @@ macro_rules! sequence_impls {
 
 /// A single-code-unit UTF-16 sequence representing a (non-surrogate)
 /// character in the Basic Multilingual Plane.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct Bmp {
     // SAFETY-USABLE INVARIANT: Not a surrogate.
@@ -243,7 +243,7 @@ sequence_impls!(Bmp, bmp,);
 
 /// A single surrogate code unit, which can be a high
 /// surrogate or a low surrogate
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct Surrogate {
     // SAFETY-USABLE INVARIANT: A surrogate.
@@ -277,7 +277,7 @@ impl Surrogate {
 code_unit_impls!(Surrogate, surrogate,);
 
 /// A high surrogate
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct HighSurrogate {
     // SAFETY-USABLE INVARIANT: A high surrogate.
@@ -327,7 +327,7 @@ impl HighSurrogate {
 code_unit_impls!(HighSurrogate, high_surrogate,);
 
 /// A low surrogate
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct LowSurrogate {
     // SAFETY-USABLE INVARIANT: A low surrogate.
@@ -361,7 +361,7 @@ impl LowSurrogate {
 
     /// Fallible constructor given a surrogate
     ///
-    /// `Ok` if high surrogate and `Err` otherwise.
+    /// `Ok` if low surrogate and `Err` otherwise.
     #[inline(always)]
     pub const fn try_new_with_surrogate(surrogate: Surrogate) -> Result<Self, Utf16CodeUnitError> {
         let code_unit = surrogate.to_u16();
@@ -380,7 +380,7 @@ code_unit_impls!(LowSurrogate, low_surrogate,);
 ///
 /// A high surrogate followed by a low surrogate representing
 /// a Unicode scalar value outside the Basic Multilingual Plane.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct SurrogatePair {
     /// SAFETY-USABLE INVARIANT: `code_units[0]` meets the requirements
@@ -439,7 +439,7 @@ impl SurrogatePair {
 sequence_impls!(SurrogatePair, surrogate_pair,);
 
 /// Type for categorizing code units as either non-surrogates or surrogates.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum BmpOrSurrogate {
     /// Non-surrogate code unit on the Basic Multilingual Plane
     Bmp(Bmp),

@@ -19,7 +19,7 @@
 use core::fmt::Formatter;
 use core::mem::transmute;
 
-/// View `&[NonAscii]` as `&[u8]
+/// View `&[NonAscii]` as `&[u8]`
 #[inline(always)]
 const fn cast_slice(s: &[NonAscii]) -> &[u8] {
     // SAFETY: It's safe to view `repr(u8)` as `u8`.
@@ -27,7 +27,7 @@ const fn cast_slice(s: &[NonAscii]) -> &[u8] {
 }
 
 /// A type for signaling UTF-8 errors.
-#[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 #[non_exhaustive]
 pub struct Utf8ByteError;
 
@@ -284,7 +284,7 @@ macro_rules! sequence_impls {
 
 /// A byte in the ASCII range (single-byte UTF-8 sequence).
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum Ascii {
     B00 = 0x00,
@@ -467,7 +467,7 @@ sequence_impls!(Ascii, ascii,);
 
 /// A byte in the non-ASCII range.
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum NonAscii {
     B80 = 0x80,
@@ -636,7 +636,7 @@ byte_impls!(NonAscii, non_ascii,);
 /// of a three-byte or four-byte sequence whose lead byte is 0xE0, 0xED,
 /// 0xF0, or 0xF4.
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum UnconstrainedContinuation {
     B80 = 0x80,
@@ -761,7 +761,7 @@ non_ascii_impls!(UnconstrainedContinuation, continuation,);
 /// A lead byte for a multibyte sequence (two-byte, three-byte, or
 /// four-byte).
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum LeadForMultiByte {
     Bc2 = 0xc2,
@@ -852,7 +852,7 @@ non_ascii_impls!(LeadForMultiByte, lead,);
 
 /// A lead byte for a two-byte UTF-8 sequence (0xC2 to 0xDF, inclusive)
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum LeadForTwoByte {
     Bc2 = 0xc2,
@@ -942,7 +942,7 @@ lead_impls!(LeadForTwoByte,);
 
 /// A lead byte for a three-byte UTF-8 sequence (0xE0 to 0xEF, inclusive)
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum LeadForThreeByte {
     Be0 = 0xe0,
@@ -1018,7 +1018,7 @@ lead_impls!(LeadForThreeByte,);
 
 /// A lead byte for a four-byte UTF-8 sequence (0xF0 to 0xF4, inclusive)
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum LeadForFourByte {
     Bf0 = 0xf0,
@@ -1082,7 +1082,7 @@ byte_impls!(LeadForFourByte, lead,);
 lead_impls!(LeadForFourByte,);
 
 /// Two-byte UTF-8 sequence
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct TwoByteSequence {
     /// # Safety Usable Invariant
@@ -1101,7 +1101,7 @@ impl TwoByteSequence {
         // For `second` to be a continuation, `check` has to be zero.
         // We can let the third bit from the top overlap: It has to be zero for
         // both checks, so when we OR the checks together, if both sides succeed,
-        // and it can be one only if either side fails.
+        // and it can be 1 only if either side fails.
         ((prepared.first & 0b1110_0000) | (prepared.check >> 2)) == 0b1100_0000
     }
 
@@ -1199,7 +1199,7 @@ impl TwoByteSequence {
 sequence_impls!(TwoByteSequence, two_byte,);
 
 /// Three-byte UTF-8 sequence
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct ThreeByteSequence {
     /// # Safety Usable Invariant
@@ -1331,7 +1331,7 @@ impl ThreeByteSequence {
 sequence_impls!(ThreeByteSequence, three_byte,);
 
 /// Four-byte UTF-8 sequence
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct FourByteSequence {
     /// # Safety Usable Invariant
@@ -1489,7 +1489,7 @@ impl PreparedTwoBytes {
     /// Constructor
     ///
     /// `first` and `second` represent the first two bytes of a
-    /// potential UTF-8 sequence for effecient checking for whether
+    /// potential UTF-8 sequence for efficient checking for whether
     /// they actually form such a prefix.
     #[inline(always)]
     pub const fn new(first: u8, second: u8) -> Self {
@@ -1546,17 +1546,17 @@ impl PreparedThreeBytes {
     /// Constructor
     ///
     /// `first`, `second`, and `third` represent the first three bytes of a
-    /// potential UTF-8 sequence for effecient checking for whether
+    /// potential UTF-8 sequence for efficient checking for whether
     /// they actually form such a prefix.
     #[inline(always)]
     pub const fn new(first: u8, second: u8, third: u8) -> Self {
         Self::new_with_prepared(PreparedTwoBytes::new(first, second), third)
     }
 
-    /// Constructor with already-preparend first two bytes
+    /// Constructor with already-prepared first two bytes
     ///
     /// `prepared` and `third` represent the first three bytes of a
-    /// potential UTF-8 sequence for effecient checking for whether
+    /// potential UTF-8 sequence for efficient checking for whether
     /// they actually form such a prefix.
     #[inline(always)]
     pub const fn new_with_prepared(prepared: PreparedTwoBytes, third: u8) -> Self {
@@ -1666,7 +1666,7 @@ mod tests {
     #[test]
     fn test_two_byte_prefix() {
         for first in 0..=0xFF {
-            for second in 0..0xFF {
+            for second in 0..=0xFF {
                 let prepared = PreparedTwoBytes::new(first, second);
                 assert_eq!(
                     prepared.sequence_prefix(),
@@ -1679,7 +1679,7 @@ mod tests {
     #[test]
     fn test_two_byte_prefix_first_not_ascii() {
         for first in 0x80..=0xFF {
-            for second in 0..0xFF {
+            for second in 0..=0xFF {
                 let prepared = PreparedTwoBytes::new(first, second);
                 assert_eq!(
                     prepared.sequence_prefix_assuming_first_not_ascii(),
@@ -1692,8 +1692,8 @@ mod tests {
     #[test]
     fn test_three_byte_prefix_assuming_not_well_formed_single_or_two_byte() {
         for first in 0x80..=0xFF {
-            for second in 0..0xFF {
-                for third in 0..0xFF {
+            for second in 0..=0xFF {
+                for third in 0..=0xFF {
                     let prepared = PreparedThreeBytes::new(first, second, third);
                     assert_eq!(
                         !LeadForTwoByte::is(first)
@@ -1709,8 +1709,8 @@ mod tests {
     #[test]
     fn test_prefix_of_four_byte() {
         for first in 0..=0xFF {
-            for second in 0..0xFF {
-                for third in 0..0xFF {
+            for second in 0..=0xFF {
+                for third in 0..=0xFF {
                     let prepared = PreparedThreeBytes::new(first, second, third);
                     assert_eq!(
                         prepared.prefix_of_four_byte(),
