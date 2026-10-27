@@ -1,7 +1,7 @@
 [package]
 name = "utf_types"
 version = "1.0.0"
-rust-version = "1.81" # core::error::Error
+rust-version = "1.83" # const computation of the data table
 edition = "2021"
 description = "Types for UTF-8 and UTF-16 code units and code unit sequences"
 authors = ["Henri Sivonen <hsivonen@hsivonen.fi>"]

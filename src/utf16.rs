@@ -14,21 +14,128 @@
 // See the Licenses for the specific language governing permissions and
 // limitations under the Licenses.
 
+//! Types for UTF-16 code unit sequences and their parts.
+
 use core::fmt::Formatter;
 use core::num::NonZeroU16;
 
+/// View `&[Surrogate]` as `&[u16]
+#[inline(always)]
+const fn cast_slice(s: &[Surrogate]) -> &[u16] {
+    // SAFETY: It's safe to view `repr(transparent)` of
+    // `NonZeroU16` as `u16`.
+    unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), s.len()) }
+}
+
 /// A type for signaling UTF-16 errors.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
 #[non_exhaustive]
 pub struct Utf16CodeUnitError;
 
 impl core::fmt::Display for Utf16CodeUnitError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), core::fmt::Error> {
-        write!(f, "code unit not fit the requested position in UTF-16")
+        write!(f, "code unit does not fit the requested position in UTF-16")
     }
 }
 
 impl core::error::Error for Utf16CodeUnitError {}
+
+macro_rules! surrogate_impl {
+    ($min:expr,
+     $max:expr,
+     $(#[$is_meta:meta])*,
+     $(#[$unchecked_meta:meta])*,
+     $(#[$checked_meta:meta])*,
+    ) => {
+        /// Minimum possible value.
+        pub const MIN: Self = const {
+            Self {
+                code_unit: if let Some(min) = NonZeroU16::new($min) {
+                    min
+                } else {
+                    panic!();
+                },
+            }
+        };
+
+        /// Maximum possible value.
+        pub const MAX: Self = const {
+            Self {
+                code_unit: if let Some(max) = NonZeroU16::new($max) {
+                    max
+                } else {
+                    panic!();
+                },
+            }
+        };
+
+        $(#[$is_meta])*
+        #[inline(always)]
+        pub const fn is(code_unit: u16) -> bool {
+            code_unit >= Self::MIN.to_u16() && code_unit <= Self::MAX.to_u16()
+        }
+
+        $(#[$unchecked_meta])*
+        #[inline(always)]
+        pub const unsafe fn new_unchecked(code_unit: u16) -> Self {
+            debug_assert!(Self::is(code_unit));
+            // INVARIANT UPHELD: The range is this function's safety invariant.
+            // SAFETY: Surrogateness implies non-zeroness.
+            Self { code_unit: unsafe { NonZeroU16::new_unchecked(code_unit) } }
+        }
+
+        $(#[$checked_meta])*
+        #[inline(always)]
+        pub const fn try_new(code_unit: u16) -> Result<Self, Utf16CodeUnitError> {
+            if Self::is(code_unit) {
+                // SAFETY: We checked the safety invariant immediately above.
+                Ok(unsafe { Self::new_unchecked(code_unit) })
+            } else {
+                Err(Utf16CodeUnitError)
+            }
+        }
+
+        /// Convert to plain code unit
+        #[inline(always)]
+        pub const fn to_u16(self) -> u16 {
+            self.code_unit.get()
+        }
+    };
+}
+
+macro_rules! to_surrogate {
+    () => {
+        /// Convert to `Surrogate`
+        #[inline(always)]
+        pub const fn to_surrogate(self) -> Surrogate {
+            // INVARIANT UPHELD: `Self` has a stricter invariant than the target
+            // type, so the conversion is safe.
+            Surrogate {
+                code_unit: self.code_unit,
+            }
+        }
+    };
+}
+
+macro_rules! code_unit_impls {
+    ($type:ident,
+     $type_specific_ident:ident,
+    ) => {
+        impl TryFrom<u16> for $type {
+            type Error = Utf16CodeUnitError;
+
+            fn try_from(code_unit: u16) -> Result<Self, Utf16CodeUnitError> {
+                Self::try_new(code_unit)
+            }
+        }
+
+        impl From<$type> for u16 {
+            fn from($type_specific_ident: $type) -> Self {
+                $type_specific_ident.to_u16()
+            }
+        }
+    };
+}
 
 /// For making sure that reviewing this file is sufficient for
 /// reviewing the implementations of `Utf16CodeUnitSequence`.
@@ -36,16 +143,28 @@ trait Seal {}
 
 /// Common output conversions for both UTF-16 code unit sequences.
 #[allow(private_bounds)] // allow sealing
-pub trait Utf16CodeUnitSequence: Seal + Copy + Clone {
-    /// Convert the code unit sequence to `char`
-    fn to_char(self) -> char;
+pub trait Utf16CodeUnitSequence: Seal + Copy + Clone + Into<char> + AsRef<[u16]> {}
 
-    /// View the byte sequence as `&[u16]`
-    ///
-    /// # Safety-usable invariant
-    ///
-    /// The caller may rely on the length being 1 or 2.
-    fn as_slice(&self) -> &[u16];
+macro_rules! sequence_impls {
+    ($type:ident,
+     $type_specific_ident:ident,
+    ) => {
+        impl Seal for $type {}
+
+        impl Utf16CodeUnitSequence for $type {}
+
+        impl From<$type> for char {
+            fn from($type_specific_ident: $type) -> Self {
+                $type_specific_ident.to_char()
+            }
+        }
+
+        impl AsRef<[u16]> for $type {
+            fn as_ref(&self) -> &[u16] {
+                self.as_slice()
+            }
+        }
+    };
 }
 
 /// A single-code-unit UTF-16 sequence representing a (non-surrogate)
@@ -99,13 +218,10 @@ impl Bmp {
     pub const fn to_u16(self) -> u16 {
         self.code_unit
     }
-}
 
-impl Seal for Bmp {}
-
-impl Utf16CodeUnitSequence for Bmp {
+    /// Convert to `char`
     #[inline(always)]
-    fn to_char(self) -> char {
+    pub const fn to_char(self) -> char {
         let scalar = self.code_unit as u32;
         debug_assert!(char::from_u32(scalar).is_some());
         // SAFETY: The invariant of `Bmp` guarantees that
@@ -114,74 +230,16 @@ impl Utf16CodeUnitSequence for Bmp {
         unsafe { char::from_u32_unchecked(scalar) }
     }
 
+    /// View as `&[u16]`
     #[inline(always)]
-    fn as_slice(&self) -> &[u16] {
+    pub const fn as_slice(&self) -> &[u16] {
         core::slice::from_ref(&self.code_unit)
     }
 }
 
-macro_rules! surrogate_impl {
-    ($min:expr,
-     $max:expr,
-     $(#[$is_meta:meta])*,
-     $(#[$unchecked_meta:meta])*,
-     $(#[$checked_meta:meta])*,
-    ) => {
-        /// Minimum possible value.
-        pub const MIN: Self = const {
-            Self {
-                code_unit: if let Some(min) = NonZeroU16::new($min) {
-                    min
-                } else {
-                    panic!();
-                },
-            }
-        };
+code_unit_impls!(Bmp, bmp,);
 
-        /// Maximum possible value.
-        pub const MAX: Self = const {
-            Self {
-                code_unit: if let Some(min) = NonZeroU16::new($max) {
-                    min
-                } else {
-                    panic!();
-                },
-            }
-        };
-
-        $(#[$is_meta])*
-        #[inline(always)]
-        pub const fn is(code_unit: u16) -> bool {
-            code_unit >= Self::MIN.to_u16() && code_unit <= Self::MAX.to_u16()
-        }
-
-        $(#[$unchecked_meta])*
-        #[inline(always)]
-        pub const unsafe fn new_unchecked(code_unit: u16) -> Self {
-            debug_assert!(Self::is(code_unit));
-            // INVARIANT UPHELD: The range is this function's safety invariant.
-            // SAFETY: Surrogateness implies non-zeroness.
-            Self { code_unit: unsafe { NonZeroU16::new_unchecked(code_unit) } }
-        }
-
-        $(#[$checked_meta])*
-        #[inline(always)]
-        pub const fn try_new(code_unit: u16) -> Result<Self, Utf16CodeUnitError> {
-            if Self::is(code_unit) {
-                // SAFETY: We checked the safety invariant immediately above.
-                Ok(unsafe { Self::new_unchecked(code_unit) })
-            } else {
-                Err(Utf16CodeUnitError)
-            }
-        }
-
-        /// Convert to plain code unit
-        #[inline(always)]
-        pub const fn to_u16(self) -> u16 {
-            self.code_unit.get()
-        }
-    };
-}
+sequence_impls!(Bmp, bmp,);
 
 /// A single surrogate code unit, which can be a high
 /// surrogate or a low surrogate
@@ -214,33 +272,15 @@ impl Surrogate {
         /// `Ok` if surrogate and `Err` otherwise.
         ,
     );
-
-    /// Contructor from high surrogate
-    #[inline(always)]
-    pub const fn new_with_high(high_surrogate: HighSurrogate) -> Self {
-        // INVARIANT UPHELD: The invariant of `HighSurrogate` is stricter
-        // that the invariant of `Self`, so this is correct.
-        Self {
-            code_unit: high_surrogate.code_unit,
-        }
-    }
-
-    /// Contructor from low surrogate
-    #[inline(always)]
-    pub const fn new_with_low(low_surrogate: LowSurrogate) -> Self {
-        // INVARIANT UPHELD: The invariant of `LowSurrogate` is stricter
-        // that the invariant of `Self`, so this is correct.
-        Self {
-            code_unit: low_surrogate.code_unit,
-        }
-    }
 }
+
+code_unit_impls!(Surrogate, surrogate,);
 
 /// A high surrogate
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct HighSurrogate {
-    // SAFETY-USABLE INVARIANT: A surrogate.
+    // SAFETY-USABLE INVARIANT: A high surrogate.
     code_unit: NonZeroU16,
 }
 
@@ -267,6 +307,8 @@ impl HighSurrogate {
         ,
     );
 
+    to_surrogate!();
+
     /// Fallible constructor given a surrogate
     ///
     /// `Ok` if high surrogate and `Err` otherwise.
@@ -282,6 +324,8 @@ impl HighSurrogate {
     }
 }
 
+code_unit_impls!(HighSurrogate, high_surrogate,);
+
 /// A low surrogate
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
@@ -294,7 +338,7 @@ impl LowSurrogate {
     surrogate_impl!(
         0xDC00,
         0xDFFF,
-        /// Whether `code_unit` is a surrogate.
+        /// Whether `code_unit` is a low surrogate.
         ,
         /// Unchecked constructor
         ///
@@ -313,6 +357,8 @@ impl LowSurrogate {
         ,
     );
 
+    to_surrogate!();
+
     /// Fallible constructor given a surrogate
     ///
     /// `Ok` if high surrogate and `Err` otherwise.
@@ -327,6 +373,8 @@ impl LowSurrogate {
         }
     }
 }
+
+code_unit_impls!(LowSurrogate, low_surrogate,);
 
 /// A two-code-unit UTF-16 sequence
 ///
@@ -348,16 +396,30 @@ impl SurrogatePair {
         // INVARIANT UPHELD: We put the high surrogate in the first position
         // and the low surrogate in the second position.
         Self {
-            code_units: [Surrogate::new_with_high(high), Surrogate::new_with_low(low)],
+            code_units: [high.to_surrogate(), low.to_surrogate()],
         }
     }
-}
 
-impl Seal for SurrogatePair {}
-
-impl Utf16CodeUnitSequence for SurrogatePair {
+    /// Convert to typed code unit tuple.
     #[inline(always)]
-    fn to_char(self) -> char {
+    pub const fn to_typed_code_units(self) -> (HighSurrogate, LowSurrogate) {
+        (
+            // INVARIANT UPHELD: This is actually a high surrogate per the
+            // invariant of `self.code_units`.
+            HighSurrogate {
+                code_unit: self.code_units[0].code_unit,
+            },
+            // INVARIANT UPHELD: This is actually a low surrogate per the
+            // invariant of `self.code_units`.
+            LowSurrogate {
+                code_unit: self.code_units[1].code_unit,
+            },
+        )
+    }
+
+    /// Convert to `char`
+    #[inline(always)]
+    pub const fn to_char(self) -> char {
         let scalar = ((self.code_units[0].to_u16() as u32) << 10)
             + (self.code_units[1].to_u16() as u32)
             - (((0xD800u32 << 10) - 0x10000u32) + 0xDC00u32);
@@ -367,22 +429,27 @@ impl Utf16CodeUnitSequence for SurrogatePair {
         unsafe { char::from_u32_unchecked(scalar) }
     }
 
+    /// View as `&[u16]`
     #[inline(always)]
-    fn as_slice(&self) -> &[u16] {
-        // SAFETY: Viewing a type that's `repr(transparent)` of `NonZeroU16` as `u16`
-        // is safe.
-        let slice: &[Surrogate] = &self.code_units;
-        unsafe { core::mem::transmute(slice) }
+    pub const fn as_slice(&self) -> &[u16] {
+        cast_slice(&self.code_units)
     }
 }
 
+sequence_impls!(SurrogatePair, surrogate_pair,);
+
+/// Type for categorizing code units as either non-surrogates or surrogates.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BmpOrSurrogate {
+    /// Non-surrogate code unit on the Basic Multilingual Plane
     Bmp(Bmp),
+    /// Surrogate
     Surrogate(Surrogate),
 }
 
 impl BmpOrSurrogate {
+    /// Constructor
+    #[inline(always)]
     pub const fn new(code_unit: u16) -> Self {
         if Bmp::is(code_unit) {
             // SAFETY: We checked the invariant above.
