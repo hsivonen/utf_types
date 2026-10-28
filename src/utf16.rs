@@ -438,6 +438,9 @@ impl SurrogatePair {
 
 sequence_impls!(SurrogatePair, surrogate_pair,);
 
+// Separate type to keep the `try_new` constructors consistent in `Err()` containing
+// an actual error type and to not characterize surregates as errors.
+
 /// Type for categorizing code units as either non-surrogates or surrogates.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum BmpOrSurrogate {
