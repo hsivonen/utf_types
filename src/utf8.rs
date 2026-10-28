@@ -1478,7 +1478,7 @@ impl FourByteSequence {
 sequence_impls!(FourByteSequence, four_byte,);
 
 /// Wrapper for the first two bytes and a precomputed value.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct PreparedTwoBytes {
     first: u8,
     second: u8,
@@ -1534,7 +1534,7 @@ impl PreparedTwoBytes {
 }
 
 /// Wrapper for the first three bytes and a precomputed value.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct PreparedThreeBytes {
     first: u8,
     second: u8,
@@ -1610,7 +1610,13 @@ impl PreparedThreeBytes {
 
 #[cfg(test)]
 mod tests {
-    use super::{LeadForTwoByte, PreparedThreeBytes, PreparedTwoBytes};
+    use super::*;
+
+    /// `true` iff `bytes` is well-formed UTF-8 consisting of exactly one
+    /// scalar value.
+    fn single_scalar_reference(bytes: &[u8]) -> bool {
+        core::str::from_utf8(bytes).is_ok_and(|s| s.chars().count() == 1)
+    }
 
     fn two_byte_prefix_reference(first: u8, second: u8) -> bool {
         if !super::LeadForMultiByte::is(first) {
@@ -1664,59 +1670,196 @@ mod tests {
     }
 
     #[test]
-    fn test_two_byte_prefix() {
+    fn test_bytes() {
         for first in 0..=0xFF {
-            for second in 0..=0xFF {
-                let prepared = PreparedTwoBytes::new(first, second);
-                assert_eq!(
-                    prepared.sequence_prefix(),
-                    two_byte_prefix_reference(first, second)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_two_byte_prefix_first_not_ascii() {
-        for first in 0x80..=0xFF {
-            for second in 0..=0xFF {
-                let prepared = PreparedTwoBytes::new(first, second);
-                assert_eq!(
-                    prepared.sequence_prefix_assuming_first_not_ascii(),
-                    two_byte_prefix_reference(first, second)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_three_byte_prefix_assuming_not_well_formed_single_or_two_byte() {
-        for first in 0x80..=0xFF {
-            for second in 0..=0xFF {
-                for third in 0..=0xFF {
-                    let prepared = PreparedThreeBytes::new(first, second, third);
+            let b = first;
+            macro_rules! check_range {
+                ($type:ident, $range:expr) => {
+                    let in_range = $range.contains(&b);
+                    assert_eq!($type::is(b), in_range);
                     assert_eq!(
-                        !LeadForTwoByte::is(first)
-                            && prepared
-                                .sequence_prefix_assuming_not_well_formed_single_or_two_byte(),
-                        three_byte_prefix_reference(first, second, third)
+                        $type::try_new(b).map($type::to_u8),
+                        in_range.then_some(b).ok_or(Utf8ByteError)
+                    );
+                };
+            }
+            check_range!(Ascii, 0x00..=0x7F);
+            check_range!(NonAscii, 0x80..=0xFF);
+            check_range!(UnconstrainedContinuation, 0x80..=0xBF);
+            check_range!(LeadForMultiByte, 0xC2..=0xF4);
+            check_range!(LeadForTwoByte, 0xC2..=0xDF);
+            check_range!(LeadForThreeByte, 0xE0..=0xEF);
+            check_range!(LeadForFourByte, 0xF0..=0xF4);
+
+            if let Ok(ascii) = Ascii::try_new(b) {
+                assert_eq!(ascii.to_char() as u32, b as u32);
+                assert_eq!(ascii.as_str().as_bytes(), &[b]);
+            }
+            if let Ok(non_ascii) = NonAscii::try_new(b) {
+                assert_eq!(
+                    UnconstrainedContinuation::try_from(non_ascii).map(|c| c.to_non_ascii()),
+                    UnconstrainedContinuation::try_new(b).map(|c| c.to_non_ascii())
+                );
+                assert_eq!(
+                    LeadForMultiByte::try_from(non_ascii).map(|l| l.to_non_ascii()),
+                    LeadForMultiByte::try_new(b).map(|l| l.to_non_ascii())
+                );
+            }
+            if let Ok(continuation) = UnconstrainedContinuation::try_new(b) {
+                assert_eq!(continuation.low_six(), b & 0x3F);
+                assert_eq!(continuation.to_non_ascii().to_u8(), b);
+            }
+            if let Ok(lead) = LeadForMultiByte::try_new(b) {
+                assert_eq!(
+                    LeadForTwoByte::try_from(lead).map(|l| l.to_lead_for_multi_byte()),
+                    LeadForTwoByte::try_new(b).map(|l| l.to_lead_for_multi_byte())
+                );
+                assert_eq!(
+                    LeadForThreeByte::try_from(lead).map(|l| l.to_lead_for_multi_byte()),
+                    LeadForThreeByte::try_new(b).map(|l| l.to_lead_for_multi_byte())
+                );
+                assert_eq!(
+                    LeadForFourByte::try_from(lead).map(|l| l.to_lead_for_multi_byte()),
+                    LeadForFourByte::try_new(b).map(|l| l.to_lead_for_multi_byte())
+                );
+            }
+            if let Ok(lead) = LeadForTwoByte::try_new(b) {
+                assert_eq!(lead.low_five(), b & 0x1F);
+                assert_eq!(lead.to_non_ascii().to_u8(), b);
+            }
+            if let Ok(lead) = LeadForThreeByte::try_new(b) {
+                assert_eq!(lead.low_four(), b & 0x0F);
+                assert_eq!(lead.to_non_ascii().to_u8(), b);
+            }
+            if let Ok(lead) = LeadForFourByte::try_new(b) {
+                assert_eq!(lead.low_three(), b & 0x07);
+                assert_eq!(lead.to_non_ascii().to_u8(), b);
+            }
+
+            for second in 0..=0xFF {
+                let prepared_two = PreparedTwoBytes::new(first, second);
+                assert_eq!(
+                    prepared_two.sequence_prefix(),
+                    two_byte_prefix_reference(first, second)
+                );
+                if first >= 0x80 {
+                    assert_eq!(
+                        prepared_two.sequence_prefix_assuming_first_not_ascii(),
+                        two_byte_prefix_reference(first, second)
                     );
                 }
-            }
-        }
-    }
 
-    #[test]
-    fn test_prefix_of_four_byte() {
-        for first in 0..=0xFF {
-            for second in 0..=0xFF {
                 for third in 0..=0xFF {
-                    let prepared = PreparedThreeBytes::new(first, second, third);
+                    let prepared_three = PreparedThreeBytes::new(first, second, third);
                     assert_eq!(
-                        prepared.prefix_of_four_byte(),
+                        prepared_three,
+                        PreparedThreeBytes::new_with_prepared(prepared_two, third)
+                    );
+                    if first >= 0x80 && !LeadForTwoByte::is(first) {
+                        assert_eq!(
+                            prepared_three
+                                .sequence_prefix_assuming_not_well_formed_single_or_two_byte(),
+                            three_byte_prefix_reference(first, second, third)
+                        );
+                    }
+                    assert_eq!(
+                        prepared_three.prefix_of_four_byte(),
                         prefix_of_four_byte_reference(first, second, third)
                     );
+
+                    let expected = single_scalar_reference(&[first, second, third]);
+                    assert_eq!(ThreeByteSequence::is(first, second, third), expected);
+                    assert_eq!(
+                        ThreeByteSequence::try_new_with_prepared(prepared_three).is_ok(),
+                        expected
+                    );
+
+                    // Limited value space for fourth byte to limit the duration of the test.
+                    for fourth in [
+                        0x00, 0x3F, 0x40, 0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0, 0xFF,
+                    ] {
+                        let expected = single_scalar_reference(&[first, second, third, fourth]);
+                        assert_eq!(FourByteSequence::is(first, second, third, fourth), expected);
+                        assert_eq!(
+                            FourByteSequence::try_new_with_prepared(prepared_three, fourth).is_ok(),
+                            expected
+                        );
+                    }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_scalars() {
+        let mut previous_two: Option<TwoByteSequence> = None;
+        let mut previous_three: Option<ThreeByteSequence> = None;
+        let mut previous_four: Option<FourByteSequence> = None;
+        for c in '\u{0}'..=char::MAX {
+            let mut buf = [0u8; 4];
+            let s: &str = c.encode_utf8(&mut buf);
+            let b = s.as_bytes();
+            match *b {
+                [first] => {
+                    let ascii = Ascii::try_new(first).unwrap();
+                    assert_eq!(ascii.to_char(), c);
+                    assert_eq!(ascii.as_str(), s);
+                }
+                [first, second] => {
+                    let sequence = TwoByteSequence::try_new(first, second).unwrap();
+                    assert_eq!(
+                        TwoByteSequence::try_new_with_prepared(PreparedTwoBytes::new(
+                            first, second
+                        )),
+                        Ok(sequence)
+                    );
+                    assert!(PreparedTwoBytes::new(first, second).sequence_prefix());
+                    assert_eq!(sequence.to_char(), c);
+                    assert_eq!(sequence.as_str(), s);
+                    let (lead, continuation) = sequence.to_typed_bytes();
+                    assert_eq!([lead.to_u8(), continuation.to_u8()], [first, second]);
+                    assert!(previous_two < Some(sequence));
+                    previous_two = Some(sequence);
+                }
+                [first, second, third] => {
+                    let sequence = ThreeByteSequence::try_new(first, second, third).unwrap();
+                    assert_eq!(
+                        ThreeByteSequence::try_new_with_prepared(PreparedThreeBytes::new(
+                            first, second, third
+                        )),
+                        Ok(sequence)
+                    );
+                    assert!(PreparedThreeBytes::new(first, second, third)
+                        .sequence_prefix_assuming_not_well_formed_single_or_two_byte());
+                    assert_eq!(sequence.to_char(), c);
+                    assert_eq!(sequence.as_str(), s);
+                    let (lead, c1, c2) = sequence.to_typed_bytes();
+                    assert_eq!(
+                        [lead.to_u8(), c1.to_u8(), c2.to_u8()],
+                        [first, second, third]
+                    );
+                    assert!(previous_three < Some(sequence));
+                    previous_three = Some(sequence);
+                }
+                [first, second, third, fourth] => {
+                    let sequence = FourByteSequence::try_new(first, second, third, fourth).unwrap();
+                    let prepared = PreparedThreeBytes::new(first, second, third);
+                    assert!(prepared.prefix_of_four_byte());
+                    assert_eq!(
+                        FourByteSequence::try_new_with_prepared(prepared, fourth),
+                        Ok(sequence)
+                    );
+                    assert_eq!(sequence.to_char(), c);
+                    assert_eq!(sequence.as_str(), s);
+                    let (lead, c1, c2, c3) = sequence.to_typed_bytes();
+                    assert_eq!(
+                        [lead.to_u8(), c1.to_u8(), c2.to_u8(), c3.to_u8()],
+                        [first, second, third, fourth]
+                    );
+                    assert!(previous_four < Some(sequence));
+                    previous_four = Some(sequence);
+                }
+                _ => unreachable!(),
             }
         }
     }
