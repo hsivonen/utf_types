@@ -1866,4 +1866,48 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_niche() {
+        assert_eq!(
+            core::mem::size_of::<Option<Ascii>>(),
+            core::mem::size_of::<Ascii>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<NonAscii>>(),
+            core::mem::size_of::<NonAscii>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<UnconstrainedContinuation>>(),
+            core::mem::size_of::<UnconstrainedContinuation>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<LeadForMultiByte>>(),
+            core::mem::size_of::<LeadForMultiByte>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<LeadForTwoByte>>(),
+            core::mem::size_of::<LeadForTwoByte>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<LeadForThreeByte>>(),
+            core::mem::size_of::<LeadForThreeByte>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<LeadForFourByte>>(),
+            core::mem::size_of::<LeadForFourByte>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<TwoByteSequence>>(),
+            core::mem::size_of::<TwoByteSequence>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<ThreeByteSequence>>(),
+            core::mem::size_of::<ThreeByteSequence>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<FourByteSequence>>(),
+            core::mem::size_of::<FourByteSequence>()
+        );
+    }
 }

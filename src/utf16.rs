@@ -463,3 +463,117 @@ impl BmpOrSurrogate {
 
 // TODO: Add 16-bit types that correspond to the value ranges of 1, 2, and 3-byte
 // UTF-8 sequences.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_code_unit_ranges() {
+        for u in 0..=0xFFFFu16 {
+            let surrogate = (0xD800..=0xDFFF).contains(&u);
+            let high = (0xD800..=0xDBFF).contains(&u);
+            let low = (0xDC00..=0xDFFF).contains(&u);
+
+            assert_eq!(Bmp::is(u), !surrogate);
+            assert_eq!(Surrogate::is(u), surrogate);
+            assert_eq!(HighSurrogate::is(u), high);
+            assert_eq!(LowSurrogate::is(u), low);
+
+            assert_eq!(
+                Bmp::try_new(u).map(Bmp::to_u16),
+                Bmp::is(u).then_some(u).ok_or(Utf16CodeUnitError)
+            );
+            assert_eq!(
+                Surrogate::try_new(u).map(Surrogate::to_u16),
+                surrogate.then_some(u).ok_or(Utf16CodeUnitError)
+            );
+            assert_eq!(
+                HighSurrogate::try_new(u).map(HighSurrogate::to_u16),
+                high.then_some(u).ok_or(Utf16CodeUnitError)
+            );
+            assert_eq!(
+                LowSurrogate::try_new(u).map(LowSurrogate::to_u16),
+                low.then_some(u).ok_or(Utf16CodeUnitError)
+            );
+
+            match BmpOrSurrogate::new(u) {
+                BmpOrSurrogate::Bmp(bmp) => {
+                    assert!(!surrogate);
+                    assert_eq!(bmp.to_u16(), u);
+                    assert_eq!(Some(bmp.to_char()), char::from_u32(u as u32));
+                    assert_eq!(bmp.as_slice(), &[u]);
+                }
+                BmpOrSurrogate::Surrogate(s) => {
+                    assert!(surrogate);
+                    assert_eq!(s.to_u16(), u);
+                    assert_eq!(
+                        HighSurrogate::try_new_with_surrogate(s).map(HighSurrogate::to_u16),
+                        high.then_some(u).ok_or(Utf16CodeUnitError)
+                    );
+                    assert_eq!(
+                        LowSurrogate::try_new_with_surrogate(s).map(LowSurrogate::to_u16),
+                        low.then_some(u).ok_or(Utf16CodeUnitError)
+                    );
+                    if let Ok(h) = HighSurrogate::try_new(u) {
+                        assert_eq!(h.to_surrogate(), s);
+                    }
+                    if let Ok(l) = LowSurrogate::try_new(u) {
+                        assert_eq!(l.to_surrogate(), s);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_surrogate_pairs() {
+        let mut previous: Option<(SurrogatePair, char)> = None;
+        for high in 0xD800..=0xDBFFu16 {
+            for low in 0xDC00..=0xDFFFu16 {
+                let pair = SurrogatePair::new(
+                    HighSurrogate::try_new(high).unwrap(),
+                    LowSurrogate::try_new(low).unwrap(),
+                );
+                let expected = char::decode_utf16([high, low]).next().unwrap().unwrap();
+                let c = pair.to_char();
+                assert_eq!(c, expected);
+                assert_eq!(pair.as_slice(), &[high, low]);
+                let (h, l) = pair.to_typed_code_units();
+                assert_eq!((h.to_u16(), l.to_u16()), (high, low));
+                if let Some((previous_pair, previous_char)) = previous {
+                    // `Ord` is consistent with scalar value order.
+                    assert!(previous_pair < pair);
+                    assert!(previous_char < c);
+                }
+                previous = Some((pair, c));
+            }
+        }
+        assert_eq!(previous.unwrap().1, char::MAX);
+    }
+
+    #[test]
+    fn test_niche() {
+        // No niche for `Bmp` for now!
+        assert_ne!(
+            core::mem::size_of::<Option<Bmp>>(),
+            core::mem::size_of::<Bmp>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<Surrogate>>(),
+            core::mem::size_of::<Surrogate>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<HighSurrogate>>(),
+            core::mem::size_of::<HighSurrogate>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<LowSurrogate>>(),
+            core::mem::size_of::<LowSurrogate>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<SurrogatePair>>(),
+            core::mem::size_of::<SurrogatePair>()
+        );
+    }
+}
