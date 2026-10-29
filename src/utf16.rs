@@ -120,12 +120,14 @@ macro_rules! code_unit_impls {
         impl TryFrom<u16> for $type {
             type Error = Utf16CodeUnitError;
 
+            #[inline(always)]
             fn try_from(code_unit: u16) -> Result<Self, Utf16CodeUnitError> {
                 Self::try_new(code_unit)
             }
         }
 
         impl From<$type> for u16 {
+            #[inline(always)]
             fn from($type_specific_ident: $type) -> Self {
                 $type_specific_ident.to_u16()
             }
@@ -150,12 +152,14 @@ macro_rules! sequence_impls {
         impl Utf16CodeUnitSequence for $type {}
 
         impl From<$type> for char {
+            #[inline(always)]
             fn from($type_specific_ident: $type) -> Self {
                 $type_specific_ident.to_char()
             }
         }
 
         impl AsRef<[u16]> for $type {
+            #[inline(always)]
             fn as_ref(&self) -> &[u16] {
                 self.as_slice()
             }
@@ -176,6 +180,11 @@ pub struct Bmp {
 
 impl Bmp {
     /// Whether `code_unit` is in range for this type (not a surrogate)
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+    /// is satisfied.
     #[inline(always)]
     pub const fn is(code_unit: u16) -> bool {
         !Surrogate::is(code_unit)
@@ -255,6 +264,11 @@ impl Surrogate {
         0xD800,
         0xDFFF,
         /// Whether `code_unit` is a surrogate.
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+        /// is satisfied.
         ,
         /// Unchecked constructor
         ///
@@ -291,6 +305,11 @@ impl HighSurrogate {
         0xD800,
         0xDBFF,
         /// Whether `code_unit` is a high surrogate.
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+        /// is satisfied.
         ,
         /// Unchecked constructor
         ///
@@ -344,6 +363,11 @@ impl LowSurrogate {
         0xDC00,
         0xDFFF,
         /// Whether `code_unit` is a low surrogate.
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+        /// is satisfied.
         ,
         /// Unchecked constructor
         ///
@@ -447,7 +471,7 @@ impl SurrogatePair {
 sequence_impls!(SurrogatePair, surrogate_pair,);
 
 // Separate type to keep the `try_new` constructors consistent in `Err()` containing
-// an actual error type and to not characterize surregates as errors.
+// an actual error type and to not characterize surrogates as errors.
 
 /// Type for categorizing code units as either non-surrogates or surrogates.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]

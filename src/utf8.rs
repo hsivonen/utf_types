@@ -488,7 +488,7 @@ impl Ascii {
     /// Maximum possible value.
     pub const MAX: Self = Self::B7f;
 
-    /// The number of bytes is this kind of UTF-8 sequence.
+    /// The number of bytes in this kind of UTF-8 sequence.
     pub const LEN: usize = 1;
 
     byte_methods!(
@@ -517,7 +517,7 @@ impl Ascii {
     }
 
     sequence_methods!(
-        /// View as `&[u8]`
+        /// View as `&[u8; 1]`
         ///
         /// # Safety-usable invariant
         ///
@@ -1161,7 +1161,7 @@ pub struct TwoByteSequence {
 }
 
 impl TwoByteSequence {
-    /// The number of bytes is this kind of UTF-8 sequence.
+    /// The number of bytes in this kind of UTF-8 sequence.
     pub const LEN: usize = 2;
 
     /// Whether `prepared` forms a well-formed two-byte UTF-8 sequence
@@ -1268,7 +1268,7 @@ impl TwoByteSequence {
     }
 
     sequence_methods!(
-        /// View as `&[u8]`
+        /// View as `&[u8; 2]`
         ///
         /// # Safety-usable invariant
         ///
@@ -1300,7 +1300,7 @@ pub struct ThreeByteSequence {
 }
 
 impl ThreeByteSequence {
-    /// The number of bytes is this kind of UTF-8 sequence.
+    /// The number of bytes in this kind of UTF-8 sequence.
     pub const LEN: usize = 3;
 
     /// Whether `prepared` forms a well-formed three-byte UTF-8 sequence.
@@ -1421,7 +1421,7 @@ impl ThreeByteSequence {
     }
 
     sequence_methods!(
-        /// View as `&[u8]`
+        /// View as `&[u8; 3]`
         ///
         /// # Safety-usable invariant
         ///
@@ -1454,7 +1454,7 @@ pub struct FourByteSequence {
 }
 
 impl FourByteSequence {
-    /// The number of bytes is this kind of UTF-8 sequence.
+    /// The number of bytes in this kind of UTF-8 sequence.
     pub const LEN: usize = 4;
 
     /// Whether `prepared` and `fourth` form a well-formed four-byte UTF-8 sequence.
@@ -1588,7 +1588,7 @@ impl FourByteSequence {
     }
 
     sequence_methods!(
-        /// View as `&[u8]`
+        /// View as `&[u8; 4]`
         ///
         /// # Safety-usable invariant
         ///
@@ -1660,9 +1660,12 @@ pub struct PreparedThreeBytes {
     third: u8,
     /// # Safety invariant
     ///
+    /// If `first` is not a lead byte for a two-byte sequence,
     /// `check` is `0b10` iff `first`, `second`, and `third`
     /// form a well-formed three-byte UTF-8 sequence or a
     /// three-byte prefix of a four-byte UTF-8 sequence.
+    /// (Establish that `first` is not a lead byte for a two-byte
+    /// sequence when making use of `check`.)
     check: u8,
 }
 
@@ -1689,7 +1692,7 @@ impl PreparedThreeBytes {
             second: prepared.second,
             third,
             // INVARIANT UPHELD: The high two bits of `third` are 10 iff
-            // it is a continuation byte. We put these is the low two bits
+            // it is a continuation byte. We put these in the low two bits
             // of `check`. We get the high six bits from `prepared.check`
             // whose field invariant guarantees that its low two bits are
             // always zero (and, therefore, don't conflict with our placement

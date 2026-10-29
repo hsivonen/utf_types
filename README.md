@@ -10,7 +10,7 @@ Types for UTF-8 and UTF-16 code units and code unit sequences
 TL;DR: `Apache-2.0 OR MIT`
 
 Please see the file named
-[COPYRIGHT](https://github.com/hsivonen/utf_types/blob/master/COPYRIGHT).
+[COPYRIGHT](https://github.com/hsivonen/utf_types/blob/main/COPYRIGHT).
 
 ## Documentation
 
