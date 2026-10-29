@@ -76,7 +76,7 @@ macro_rules! surrogate_impl {
             debug_assert!(Self::is(code_unit));
             // INVARIANT UPHELD: The range is this function's safety invariant.
             // SAFETY: The range is enforced via `MIN` (and `MAX`), and `MIN` is checked
-            // not to be zero in its `const` initialization. 
+            // not to be zero in its `const` initialization.
             Self { code_unit: unsafe { NonZeroU16::new_unchecked(code_unit) } }
         }
 
