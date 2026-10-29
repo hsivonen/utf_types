@@ -1836,6 +1836,9 @@ mod tests {
                     prepared_two.sequence_prefix(),
                     two_byte_prefix_reference(first, second)
                 );
+                let expected = single_scalar_reference(&[first, second]);
+                assert_eq!(TwoByteSequence::is(first, second), expected);
+                assert_eq!(TwoByteSequence::is_with_prepared(prepared_two), expected);
 
                 for third in 0..=0xFF {
                     let prepared_three = PreparedThreeBytes::new(first, second, third);
