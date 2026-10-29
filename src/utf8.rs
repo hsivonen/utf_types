@@ -16,16 +16,13 @@
 
 //! Types for UTF-8 code unit sequences and their parts.
 
-use core::fmt::Formatter;
-use core::mem::transmute;
-
 /// A type for signaling UTF-8 errors.
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 #[non_exhaustive]
 pub struct Utf8ByteError;
 
 impl core::fmt::Display for Utf8ByteError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), core::fmt::Error> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
         write!(f, "byte does not fit the requested position in UTF-8")
     }
 }
@@ -160,8 +157,9 @@ macro_rules! byte_methods {
         #[inline(always)]
         pub const unsafe fn new_unchecked($type_specific_ident: u8) -> Self {
             debug_assert!(Self::is($type_specific_ident));
-            // SAFETY: Our `repr` matches and the range is this function's safety invariant.
-            unsafe { transmute($type_specific_ident) }
+            // SAFETY: Our `repr(u8)` matches argument `u8` size and the
+            // value range is this function's safety invariant.
+            unsafe { core::mem::transmute($type_specific_ident) }
         }
 
         $(#[$checked_meta])*
@@ -188,9 +186,14 @@ macro_rules! to_non_ascii {
         /// Convert to `NonAscii`
         #[inline(always)]
         pub const fn to_non_ascii(self) -> NonAscii {
-            // SAFETY: `Self` has a stricter invariant than the target
-            // type, so the transmute is safe.
-            unsafe { core::mem::transmute(self) }
+            match NonAscii::try_new(self.to_u8()) {
+                Ok(non_ascii) => non_ascii,
+                Err(_) => {
+                    // `Self` has a stricter `enum` value space
+                    // than the target type.
+                    unreachable!();
+                }
+            }
         }
     };
 }
@@ -202,9 +205,14 @@ macro_rules! to_lead_for_multi_byte {
         /// Convert to `LeadForMultiByte`
         #[inline(always)]
         pub const fn to_lead_for_multi_byte(self) -> LeadForMultiByte {
-            // SAFETY: `Self` has a stricter invariant than the target
-            // type, so the transmute is safe.
-            unsafe { core::mem::transmute(self) }
+            match LeadForMultiByte::try_new(self.to_u8()) {
+                Ok(lead) => lead,
+                Err(_) => {
+                    // `Self` has a stricter `enum` value space
+                    // than the target type.
+                    unreachable!();
+                }
+            }
         }
     };
 }
@@ -216,12 +224,14 @@ macro_rules! byte_impls {
         impl TryFrom<u8> for $type {
             type Error = Utf8ByteError;
 
+            #[inline(always)]
             fn try_from(byte: u8) -> Result<Self, Utf8ByteError> {
                 Self::try_new(byte)
             }
         }
 
         impl From<$type> for u8 {
+            #[inline(always)]
             fn from($type_specific_ident: $type) -> Self {
                 $type_specific_ident.to_u8()
             }
@@ -236,12 +246,14 @@ macro_rules! non_ascii_impls {
         impl TryFrom<NonAscii> for $type {
             type Error = Utf8ByteError;
 
+            #[inline(always)]
             fn try_from(non_ascii: NonAscii) -> Result<Self, Utf8ByteError> {
                 Self::try_new(non_ascii.to_u8())
             }
         }
 
         impl From<$type> for NonAscii {
+            #[inline(always)]
             fn from($type_specific_ident: $type) -> Self {
                 $type_specific_ident.to_non_ascii()
             }
@@ -257,12 +269,14 @@ macro_rules! lead_impls {
         impl TryFrom<LeadForMultiByte> for $type {
             type Error = Utf8ByteError;
 
+            #[inline(always)]
             fn try_from(lead: LeadForMultiByte) -> Result<Self, Utf8ByteError> {
                 Self::try_new(lead.to_u8())
             }
         }
 
         impl From<$type> for LeadForMultiByte {
+            #[inline(always)]
             fn from(lead: $type) -> Self {
                 lead.to_lead_for_multi_byte()
             }
@@ -317,12 +331,14 @@ macro_rules! sequence_impls {
         impl Utf8ByteSequence for $type {}
 
         impl From<$type> for char {
+            #[inline(always)]
             fn from($type_specific_ident: $type) -> Self {
                 $type_specific_ident.to_char()
             }
         }
 
         impl AsRef<str> for $type {
+            #[inline(always)]
             fn as_ref(&self) -> &str {
                 self.as_str()
             }
@@ -1242,11 +1258,13 @@ impl TwoByteSequence {
     #[inline(always)]
     pub const fn to_char(self) -> char {
         let scalar = (self.first.low_five_u32() << 6) | self.second.low_six_u32();
-        debug_assert!(char::from_u32(scalar).is_some());
-        // SAFETY: We distribute the bits in a way that forms
-        // a valid scalar on the assumption that the bytes represent
-        // a well-formed two-byte UTF-8 byte sequence.
-        unsafe { char::from_u32_unchecked(scalar) }
+        if let Some(c) = char::from_u32(scalar) {
+            c
+        } else {
+            // The optimizer can see from the `enum` ranges that we
+            // never reach this.
+            unreachable!()
+        }
     }
 
     sequence_methods!(

@@ -19,14 +19,6 @@
 use core::fmt::Formatter;
 use core::num::NonZeroU16;
 
-/// View `&[Surrogate]` as `&[u16]`
-#[inline(always)]
-const fn cast_slice(s: &[Surrogate]) -> &[u16] {
-    // SAFETY: It's safe to view `repr(transparent)` of
-    // `NonZeroU16` as `u16`.
-    unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), s.len()) }
-}
-
 /// A type for signaling UTF-16 errors.
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 #[non_exhaustive]
@@ -49,6 +41,9 @@ macro_rules! surrogate_impl {
     ) => {
         /// Minimum possible value.
         pub const MIN: Self = const {
+            if $min == 0 {
+                panic!();
+            }
             Self {
                 code_unit: if let Some(min) = NonZeroU16::new($min) {
                     min
@@ -80,7 +75,8 @@ macro_rules! surrogate_impl {
         pub const unsafe fn new_unchecked(code_unit: u16) -> Self {
             debug_assert!(Self::is(code_unit));
             // INVARIANT UPHELD: The range is this function's safety invariant.
-            // SAFETY: Surrogateness implies non-zeroness.
+            // SAFETY: The range is enforced via `MIN` (and `MAX`), and `MIN` is checked
+            // not to be zero in its `const` initialization. 
             Self { code_unit: unsafe { NonZeroU16::new_unchecked(code_unit) } }
         }
 
@@ -189,7 +185,7 @@ impl Bmp {
     ///
     /// # Safety
     ///
-    /// `code_unit` must _not_ be in the range `0xD800..=0xDFFF`.
+    /// The caller must ensure that `code_unit` is _not_ in the range `0xD800..=0xDFFF`.
     ///
     /// # Panics
     ///
@@ -264,7 +260,7 @@ impl Surrogate {
         ///
         /// # Safety
         ///
-        /// `code_unit` must be in the range `0xD800..=0xDFFF`.
+        /// The caller must ensure that `code_unit` is in the range `0xD800..=0xDFFF`.
         ///
         /// # Panics
         ///
@@ -300,7 +296,7 @@ impl HighSurrogate {
         ///
         /// # Safety
         ///
-        /// `code_unit` must be in the range `0xD800..=0xDBFF`.
+        /// The caller must ensure that `code_unit` is in the range `0xD800..=0xDBFF`.
         ///
         /// # Panics
         ///
@@ -322,7 +318,8 @@ impl HighSurrogate {
     pub const fn try_new_with_surrogate(surrogate: Surrogate) -> Result<Self, Utf16CodeUnitError> {
         let code_unit = surrogate.to_u16();
         if code_unit <= Self::MAX.to_u16() {
-            // SAFETY: We checked the safety invariant immediately above.
+            // SAFETY: We checked the safety invariant immediately above (the other end
+            // of the range comes from the field invariant of `Surrogate`).
             Ok(unsafe { Self::new_unchecked(code_unit) })
         } else {
             Err(Utf16CodeUnitError)
@@ -352,7 +349,7 @@ impl LowSurrogate {
         ///
         /// # Safety
         ///
-        /// `code_unit` must be in the range `0xDC00..=0xDFFF`.
+        /// The caller must ensure that `code_unit` is in the range `0xDC00..=0xDFFF`.
         ///
         /// # Panics
         ///
@@ -374,7 +371,8 @@ impl LowSurrogate {
     pub const fn try_new_with_surrogate(surrogate: Surrogate) -> Result<Self, Utf16CodeUnitError> {
         let code_unit = surrogate.to_u16();
         if code_unit >= Self::MIN.to_u16() {
-            // SAFETY: We checked the safety invariant immediately above.
+            // SAFETY: We checked the safety invariant immediately above (the other end
+            // of the range comes from the field invariant of `Surrogate`).
             Ok(unsafe { Self::new_unchecked(code_unit) })
         } else {
             Err(Utf16CodeUnitError)
