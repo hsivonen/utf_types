@@ -172,7 +172,9 @@ macro_rules! sequence_impls {
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct Bmp {
-    // SAFETY-USABLE INVARIANT: Not a surrogate.
+    /// # Safety invariant
+    ///
+    /// Not a surrogate.
     code_unit: u16, // Would be nice to have a niche without hurting perf
 }
 
@@ -246,7 +248,9 @@ sequence_impls!(Bmp, bmp,);
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct Surrogate {
-    // SAFETY-USABLE INVARIANT: A surrogate.
+    /// # Safety invariant
+    ///
+    /// A surrogate.
     code_unit: NonZeroU16,
 }
 
@@ -280,7 +284,9 @@ code_unit_impls!(Surrogate, surrogate,);
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct HighSurrogate {
-    // SAFETY-USABLE INVARIANT: A high surrogate.
+    /// # Safety invariant
+    ///
+    /// A high surrogate.
     code_unit: NonZeroU16,
 }
 
@@ -330,7 +336,9 @@ code_unit_impls!(HighSurrogate, high_surrogate,);
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct LowSurrogate {
-    // SAFETY-USABLE INVARIANT: A low surrogate.
+    /// # Safety invariant
+    ///
+    /// A low surrogate.
     code_unit: NonZeroU16,
 }
 
@@ -406,8 +414,8 @@ impl SurrogatePair {
         let scalar = ((self.high.to_u16() as u32) << 10) + (self.low.to_u16() as u32)
             - (((0xD800u32 << 10) - 0x10000u32) + 0xDC00u32);
         debug_assert!(char::from_u32(scalar).is_some());
-        // SAFETY: The above formulation results in a value in the `char` range if the
-        // safety invariant of this type is upheld.
+        // SAFETY: The above formulation results in a value in the `char` range given
+        // the value range invariants of `HighSurrogate` and `LowSurrogate`.
         unsafe { char::from_u32_unchecked(scalar) }
     }
 
