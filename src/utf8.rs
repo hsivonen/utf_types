@@ -44,6 +44,21 @@ struct Utf8Data {
     table: [u8; 384],
 }
 
+impl Utf8Data {
+    /// The table lookup for backing prefix checks.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The return value is 0 iff `first` and `second` form a prefix of a
+    /// well-formed multi-byte UTF-8 sequence (including a complete two-byte
+    /// sequence).
+    /// The lowest two bits are always 0.
+    #[inline(always)]
+    const fn lookup(&self, first: u8, second: u8) -> u8 {
+        self.table[second as usize] & self.table[first as usize + 0x80]
+    }
+}
+
 /// The first 256 entries are for looking up `second`.
 /// The rest are for looking up `first` on the assumption
 /// that `first` is not ASCII.
@@ -125,12 +140,6 @@ static UTF8_DATA: Utf8Data = Utf8Data {
         table
     },
 };
-
-/// The table lookup for backing prefix checks.
-#[inline(always)]
-const fn table_lookup(first: u8, second: u8) -> u8 {
-    UTF8_DATA.table[second as usize] & UTF8_DATA.table[first as usize + 0x80]
-}
 
 // `Ascii` and `NonAscii` benefit from `enum` representation, because it communicates
 // integer range information e.g. when they are used for table lookup.
@@ -1494,6 +1503,12 @@ sequence_impls!(FourByteSequence, four_byte,);
 pub struct PreparedTwoBytes {
     first: u8,
     second: u8,
+    /// # Safety invariant
+    ///
+    /// `check` is 0 iff `first` and `second` form a prefix
+    /// of a well-formed multibyte UTF-8 sequence (including
+    /// a complete two-byte sequence).
+    /// The lowest 2 bits are always 0.
     check: u8,
 }
 
@@ -1508,17 +1523,24 @@ impl PreparedTwoBytes {
         Self {
             first,
             second,
-            check: table_lookup(first, second),
+            // INVARIANT UPHELD: The safety-usable invariant of
+            // `lookup()` satisfies the invariant of this field.
+            check: UTF8_DATA.lookup(first, second),
         }
     }
 
     /// `true` iff the two bytes form a prefix of a
     /// well-formed multi-byte UTF-8 sequence.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Callers may depend on the above for safety.
     #[inline(always)]
     pub const fn sequence_prefix(self) -> bool {
-        // The low two bits of `check` are zero in any case.
+        // Directly from the field invariant of `check`.
+        // (The low two bits of `check` are zero in any case.
         // The high six bits are zero if this is a valid
-        // prefix for any multibyte sequence.
+        // prefix for any multibyte sequence.)
         self.check == 0
     }
 }
@@ -1529,6 +1551,11 @@ pub struct PreparedThreeBytes {
     first: u8,
     second: u8,
     third: u8,
+    /// # Safety invariant
+    ///
+    /// `check` is `0b10` iff `first`, `second`, and `third`
+    /// form a well-formed three-byte UTF-8 sequence or a
+    /// three-byte prefix of a four-byte UTF-8 sequence.
     check: u8,
 }
 
@@ -1537,7 +1564,7 @@ impl PreparedThreeBytes {
     ///
     /// `first`, `second`, and `third` represent the first three bytes of a
     /// potential UTF-8 sequence for efficient checking for whether
-    /// they actually form such a prefix.
+    /// they actually form a prefix of a well-formed UTF-8 sequence.
     #[inline(always)]
     pub const fn new(first: u8, second: u8, third: u8) -> Self {
         Self::new_with_prepared(PreparedTwoBytes::new(first, second), third)
@@ -1547,26 +1574,37 @@ impl PreparedThreeBytes {
     ///
     /// `prepared` and `third` represent the first three bytes of a
     /// potential UTF-8 sequence for efficient checking for whether
-    /// they actually form such a prefix.
+    /// they actually form a prefix of a well-formed UTF-8 sequence.
     #[inline(always)]
     pub const fn new_with_prepared(prepared: PreparedTwoBytes, third: u8) -> Self {
         Self {
             first: prepared.first,
             second: prepared.second,
             third,
+            // INVARIANT UPHELD: The high two bits of `third` are 10 iff
+            // it is a continuation byte. We put these is the low two bits
+            // of `check`. We get the high six bits from `prepared.check`
+            // whose field invariant guarantees that its low two bits are
+            // always zero (and, therefore, don't conflict with our placement
+            // of the new bits) and that the high six bits are zero iff
+            // `first` and `second` are part of a well-formed prefix.
             check: prepared.check | (third >> 6),
         }
     }
 
     /// Return `true` iff these three bytes represent a three-byte
     /// prefix of a well-formed four-byte UTF-8 sequence.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The caller may rely on the result for safety.
     #[inline(always)]
     pub const fn prefix_of_four_byte(self) -> bool {
         // The top five bits of `first` have to be 11110 for `first` to
         // be a valid four-byte lead byte.
-        // `check` must be 0b10 for `second` and `third` to be
-        // contextually valid continuations assuming that `first`
-        // is a four-byte lead byte.
+        // From the field invariant, `check` must be 0b10 for `second`
+        // and `third` to be contextually valid continuations assuming that
+        // `first` is a four-byte lead byte.
         // We shift `check` left to use the structure of the full
         // four-byte check.
         (((self.check as u16) << 8) | ((self.first & 0b1111_1000) as u16)) == 0b10_1111_0000
