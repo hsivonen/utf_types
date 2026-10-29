@@ -1164,6 +1164,24 @@ impl TwoByteSequence {
     /// The number of bytes is this kind of UTF-8 sequence.
     pub const LEN: usize = 2;
 
+    /// Whether `prepared` forms a well-formed two-byte UTF-8 sequence
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+    /// is satisfied.
+    #[inline(always)]
+    pub const fn is_with_prepared(prepared: PreparedTwoBytes) -> bool {
+        // The low two bits of `check` are always zero, so we can shift it right by two
+        // without data loss.
+        // For `first` to be a two-byte lead byte, its top 3 bits have to be 110.
+        // For `second` to be a continuation, `check` has to be zero.
+        // We can let the third bit from the top overlap: It has to be zero for
+        // both checks, so when we OR the checks together, if both sides succeed,
+        // and it can be 1 only if either side fails.
+        ((prepared.first & 0b1110_0000) | (prepared.check >> 2)) == 0b1100_0000
+    }
+
     /// Checks whether the bytes form a well-formed two-byte UTF-8 sequence.
     ///
     /// # Safety-usable invariant
@@ -1172,10 +1190,7 @@ impl TwoByteSequence {
     /// is satisfied.
     #[inline(always)]
     pub const fn is(first: u8, second: u8) -> bool {
-        // The top three bits of `first` must be 110 and the top two
-        // bits of `second` must be 10 for them to form a two-byte
-        // UTF-8 sequence.
-        ((first & 0b1110_0000) | (second >> 6)) == 0b1100_0010
+        LeadForTwoByte::is(first) && UnconstrainedContinuation::is(second)
     }
 
     /// Typed constructor
@@ -1215,6 +1230,19 @@ impl TwoByteSequence {
         if Self::is(first, second) {
             // SAFETY: We checked the safety invariant immediately above.
             Ok(unsafe { Self::new_unchecked(first, second) })
+        } else {
+            Err(Utf8ByteError)
+        }
+    }
+
+    /// Fallible constructor with prepared bytes
+    ///
+    /// `Ok` if the prepared bytes form a two-byte UTF-8 sequence and `Err` otherwise.
+    #[inline(always)]
+    pub const fn try_new_with_prepared(prepared: PreparedTwoBytes) -> Result<Self, Utf8ByteError> {
+        if Self::is_with_prepared(prepared) {
+            // SAFETY: We checked the safety invariant immediately above.
+            Ok(unsafe { Self::new_unchecked(prepared.first, prepared.second) })
         } else {
             Err(Utf8ByteError)
         }
@@ -1861,6 +1889,12 @@ mod tests {
                 }
                 [first, second] => {
                     let sequence = TwoByteSequence::try_new(first, second).unwrap();
+                    assert_eq!(
+                        TwoByteSequence::try_new_with_prepared(PreparedTwoBytes::new(
+                            first, second
+                        )),
+                        Ok(sequence)
+                    );
                     assert!(PreparedTwoBytes::new(first, second).sequence_prefix());
                     assert_eq!(sequence.to_char(), c);
                     assert_eq!(sequence.as_str(), s);
