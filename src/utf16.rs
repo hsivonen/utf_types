@@ -381,47 +381,29 @@ code_unit_impls!(LowSurrogate, low_surrogate,);
 /// A high surrogate followed by a low surrogate representing
 /// a Unicode scalar value outside the Basic Multilingual Plane.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct SurrogatePair {
-    /// SAFETY-USABLE INVARIANT: `code_units[0]` meets the requirements
-    /// of `HighSurrogate` and `code_units[1]` meets the requirements
-    /// of `LowSurrogate`.
-    code_units: [Surrogate; 2],
+    high: HighSurrogate,
+    low: LowSurrogate,
 }
 
 impl SurrogatePair {
     /// Constructor from a high surrogate and a low surrogate
     #[inline(always)]
     pub const fn new(high: HighSurrogate, low: LowSurrogate) -> Self {
-        // INVARIANT UPHELD: We put the high surrogate in the first position
-        // and the low surrogate in the second position.
-        Self {
-            code_units: [high.to_surrogate(), low.to_surrogate()],
-        }
+        Self { high, low }
     }
 
     /// Convert to typed code unit tuple.
     #[inline(always)]
     pub const fn to_typed_code_units(self) -> (HighSurrogate, LowSurrogate) {
-        (
-            // INVARIANT UPHELD: This is actually a high surrogate per the
-            // invariant of `self.code_units`.
-            HighSurrogate {
-                code_unit: self.code_units[0].code_unit,
-            },
-            // INVARIANT UPHELD: This is actually a low surrogate per the
-            // invariant of `self.code_units`.
-            LowSurrogate {
-                code_unit: self.code_units[1].code_unit,
-            },
-        )
+        (self.high, self.low)
     }
 
     /// Convert to `char`
     #[inline(always)]
     pub const fn to_char(self) -> char {
-        let scalar = ((self.code_units[0].to_u16() as u32) << 10)
-            + (self.code_units[1].to_u16() as u32)
+        let scalar = ((self.high.to_u16() as u32) << 10) + (self.low.to_u16() as u32)
             - (((0xD800u32 << 10) - 0x10000u32) + 0xDC00u32);
         debug_assert!(char::from_u32(scalar).is_some());
         // SAFETY: The above formulation results in a value in the `char` range if the
@@ -429,10 +411,30 @@ impl SurrogatePair {
         unsafe { char::from_u32_unchecked(scalar) }
     }
 
+    /// View as `&[u16; 2]`
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The array contains a single well-formed surrogate pair.
+    #[inline(always)]
+    pub const fn as_code_units(&self) -> &[u16; 2] {
+        if core::mem::size_of::<Self>() != core::mem::size_of::<[u16; 2]>() {
+            panic!();
+        }
+        let ptr: *const Self = core::ptr::from_ref(self);
+        // SAFETY: The `repr` of `Self` guarantees that it
+        // is safe to view `Self` as `[u16; 2]`.
+        unsafe { &*ptr.cast() }
+    }
+
     /// View as `&[u16]`
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The slice contains a single well-formed surrogate pair.
     #[inline(always)]
     pub const fn as_slice(&self) -> &[u16] {
-        cast_slice(&self.code_units)
+        self.as_code_units()
     }
 }
 
