@@ -145,8 +145,7 @@ static UTF8_DATA: Utf8Data = Utf8Data {
 // integer range information e.g. when they are used for table lookup.
 //
 // It's unclear if the other types benefit from communicating range information
-// to the optimizer, but let's use the same pattern for consistency even if the
-// use cases for `enum` aren't clear.
+// to the optimizer, but they enable niches anyway.
 
 macro_rules! byte_methods {
     ($type_specific_ident:ident,
@@ -269,6 +268,36 @@ macro_rules! lead_impls {
             fn from(lead: $type) -> Self {
                 lead.to_lead_for_multi_byte()
             }
+        }
+    };
+}
+
+macro_rules! sequence_methods {
+    ($(#[$as_bytes_meta:meta])*,
+     $(#[$as_str_meta:meta])*,
+    ) => {
+        $(#[$as_bytes_meta])*
+        #[inline(always)]
+        pub const fn as_bytes(&self) -> &[u8; Self::LEN] {
+            if core::mem::size_of::<Self>() != Self::LEN {
+                panic!();
+            }
+            let ptr: *const Self = core::ptr::from_ref(self);
+            // SAFETY: The `repr` of `Self` guarantees that it
+            // is safe to view `Self` as a sequence of `u8`, that
+            // the `u8`s are in the right order, and that the
+            // size of `Self` matches the length in the return type.
+            unsafe {
+                &*ptr.cast()
+            }
+        }
+
+        $(#[$as_str_meta])*
+        #[inline(always)]
+        pub const fn as_str(&self) -> &str {
+            // SAFETY: The safety-usable invariant of `as_bytes()` satisfies
+            // the safety invariant of `from_utf8_unchecked()`.
+            unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
         }
     };
 }
@@ -445,6 +474,9 @@ impl Ascii {
     /// Maximum possible value.
     pub const MAX: Self = Self::B7f;
 
+    /// The number of bytes is this kind of UTF-8 sequence.
+    pub const LEN: usize = 1;
+
     byte_methods!(
         ascii,
         /// Unchecked constructor
@@ -470,16 +502,20 @@ impl Ascii {
         self as u8 as char
     }
 
-    /// View as `&str`
-    #[inline(always)]
-    pub const fn as_str(&self) -> &str {
-        let ref_to_enum: &Ascii = self;
-        // SAFETY: `repr(u8)` is safe to view as `u8`.
-        let ref_to_byte: &u8 = unsafe { core::mem::transmute(ref_to_enum) };
-        // SAFETY: The construction of this type maintains the
-        // invariant that `self` is in the ASCII range
-        unsafe { core::str::from_utf8_unchecked(core::slice::from_ref(ref_to_byte)) }
-    }
+    sequence_methods!(
+        /// View as `&[u8]`
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// The slice contains a single ASCII byte.
+        ,
+        /// View as `&str`
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// The string slice contains a single ASCII byte/character.
+        ,
+    );
 }
 
 byte_impls!(Ascii, ascii,);
@@ -1104,15 +1140,16 @@ lead_impls!(LeadForFourByte,);
 
 /// Two-byte UTF-8 sequence
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct TwoByteSequence {
-    /// # Safety Usable Invariant
-    ///
-    /// The value is a well-formed two-byte UTF-8 sequence.
-    bytes: [NonAscii; 2],
+    first: LeadForTwoByte,
+    second: UnconstrainedContinuation,
 }
 
 impl TwoByteSequence {
+    /// The number of bytes is this kind of UTF-8 sequence.
+    pub const LEN: usize = 2;
+
     /// Whether `prepared` forms a well-formed two-byte UTF-8 sequence
     #[inline(always)]
     pub const fn is_with_prepared(prepared: PreparedTwoBytes) -> bool {
@@ -1145,14 +1182,12 @@ impl TwoByteSequence {
     #[inline(always)]
     pub const unsafe fn new_unchecked(first: u8, second: u8) -> Self {
         debug_assert!(Self::is(first, second));
-        // SAFETY: `first` and `second` are non-ASCII per the safety invariant
-        // of this method.
+        // SAFETY: `first` and `second` are in the right ranges per the
+        // safety invariant of this method.
         unsafe {
             Self {
-                bytes: [
-                    NonAscii::new_unchecked(first),
-                    NonAscii::new_unchecked(second),
-                ],
+                first: LeadForTwoByte::new_unchecked(first),
+                second: UnconstrainedContinuation::new_unchecked(second),
             }
         }
     }
@@ -1186,20 +1221,13 @@ impl TwoByteSequence {
     /// Convert to typed byte tuple.
     #[inline(always)]
     pub const fn to_typed_bytes(self) -> (LeadForTwoByte, UnconstrainedContinuation) {
-        // SAFETY: Re-interpretation is valid due to the invariant of `bytes`.
-        unsafe {
-            (
-                LeadForTwoByte::new_unchecked(self.bytes[0].to_u8()),
-                UnconstrainedContinuation::new_unchecked(self.bytes[1].to_u8()),
-            )
-        }
+        (self.first, self.second)
     }
 
     /// Convert to `char`
     #[inline(always)]
     pub const fn to_char(self) -> char {
-        let (first, second) = self.to_typed_bytes();
-        let scalar = (first.low_five_u32() << 6) | second.low_six_u32();
+        let scalar = (self.first.low_five_u32() << 6) | self.second.low_six_u32();
         debug_assert!(char::from_u32(scalar).is_some());
         // SAFETY: We distribute the bits in a way that forms
         // a valid scalar on the assumption that the bytes represent
@@ -1207,14 +1235,20 @@ impl TwoByteSequence {
         unsafe { char::from_u32_unchecked(scalar) }
     }
 
-    /// View as `&str`
-    #[inline(always)]
-    pub const fn as_str(&self) -> &str {
-        // SAFETY: The construction of this type maintains the
-        // invariant that `bytes` is a well-formed UTF-8 byte
-        // sequence.
-        unsafe { core::str::from_utf8_unchecked(cast_slice(&self.bytes)) }
-    }
+    sequence_methods!(
+        /// View as `&[u8]`
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// The bytes form a single well-formed two-byte UTF-8 sequence.
+        ,
+        /// View as `&str`
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// The string slice contains a single two-byte UTF-8 sequence.
+        ,
+    );
 }
 
 sequence_impls!(TwoByteSequence, two_byte,);
