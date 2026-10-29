@@ -146,6 +146,11 @@ macro_rules! byte_methods {
      $(#[$checked_meta:meta])*,
     ) => {
         /// Whether `byte` is in range for this type.
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+        /// is satisfied.
         #[inline(always)]
         pub const fn is(byte: u8) -> bool {
             byte >= Self::MIN.to_u8() && byte <= Self::MAX.to_u8()
@@ -1144,6 +1149,11 @@ impl TwoByteSequence {
     pub const LEN: usize = 2;
 
     /// Whether `prepared` forms a well-formed two-byte UTF-8 sequence
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+    /// is satisfied.
     #[inline(always)]
     pub const fn is_with_prepared(prepared: PreparedTwoBytes) -> bool {
         // The low two bits of `check` are always zero, so we can shift it right by two
@@ -1157,6 +1167,11 @@ impl TwoByteSequence {
     }
 
     /// Checks whether the bytes form a well-formed two-byte UTF-8 sequence.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+    /// is satisfied.
     #[inline(always)]
     pub const fn is(first: u8, second: u8) -> bool {
         LeadForTwoByte::is(first) && UnconstrainedContinuation::is(second)
@@ -1271,6 +1286,11 @@ impl ThreeByteSequence {
     pub const LEN: usize = 3;
 
     /// Whether `prepared` forms a well-formed three-byte UTF-8 sequence.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+    /// is satisfied.
     #[inline(always)]
     pub const fn is_with_prepared(prepared: PreparedThreeBytes) -> bool {
         // The top four bits of `first` have to be 1110 for `first` to
@@ -1288,6 +1308,11 @@ impl ThreeByteSequence {
     }
 
     /// Whether the bytes form a well-formed three-byte UTF-8 sequence.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+    /// is satisfied.
     #[inline(always)]
     pub const fn is(first: u8, second: u8, third: u8) -> bool {
         Self::is_with_prepared(PreparedThreeBytes::new(first, second, third))
@@ -1347,6 +1372,12 @@ impl ThreeByteSequence {
     }
 
     /// Convert to typed byte tuple.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The tuple represents a well-formed three-byte UTF-8 sequence. In particular,
+    /// the value of the second tuple item is within the permissible range given the
+    /// value of the first tuple item.
     #[inline(always)]
     pub const fn to_typed_bytes(
         self,
@@ -1409,6 +1440,11 @@ impl FourByteSequence {
     pub const LEN: usize = 4;
 
     /// Whether `prepared` and `fourth` form a well-formed four-byte UTF-8 sequence.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+    /// is satisfied.
     #[inline(always)]
     pub const fn is_with_prepared(prepared: PreparedThreeBytes, fourth: u8) -> bool {
         // The top five bits of `first` have to be 11110 for `first` to
@@ -1428,6 +1464,11 @@ impl FourByteSequence {
     }
 
     /// Whether the bytes form a well-formed four-byte UTF-8 sequence.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// Iff this method returns `true`, the safety invariant of `new_unchecked()`
+    /// is satisfied.
     #[inline(always)]
     pub const fn is(first: u8, second: u8, third: u8, fourth: u8) -> bool {
         Self::is_with_prepared(PreparedThreeBytes::new(first, second, third), fourth)
@@ -1496,6 +1537,12 @@ impl FourByteSequence {
     }
 
     /// Convert to typed byte tuple.
+    ///
+    /// # Safety-usable invariant
+    ///
+    /// The tuple represents a well-formed four-byte UTF-8 sequence. In particular,
+    /// the value of the second tuple item is within the permissible range given the
+    /// value of the first tuple item.
     #[inline(always)]
     pub const fn to_typed_bytes(
         self,
