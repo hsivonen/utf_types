@@ -19,13 +19,6 @@
 use core::fmt::Formatter;
 use core::mem::transmute;
 
-/// View `&[NonAscii]` as `&[u8]`
-#[inline(always)]
-const fn cast_slice(s: &[NonAscii]) -> &[u8] {
-    // SAFETY: It's safe to view `repr(u8)` as `u8`.
-    unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), s.len()) }
-}
-
 /// A type for signaling UTF-8 errors.
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 #[non_exhaustive]
@@ -1169,6 +1162,12 @@ impl TwoByteSequence {
         LeadForTwoByte::is(first) && UnconstrainedContinuation::is(second)
     }
 
+    /// Typed constructor
+    #[inline(always)]
+    pub const fn new(first: LeadForTwoByte, second: UnconstrainedContinuation) -> Self {
+        Self { first, second }
+    }
+
     /// Unchecked constructor
     ///
     /// # Safety
@@ -1255,15 +1254,22 @@ sequence_impls!(TwoByteSequence, two_byte,);
 
 /// Three-byte UTF-8 sequence
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct ThreeByteSequence {
-    /// # Safety Usable Invariant
+    first: LeadForThreeByte,
+    /// # Safety invariant
     ///
-    /// The value is a well-formed three-byte UTF-8 sequence.
-    bytes: [NonAscii; 3],
+    /// `second` must be in the correct range given the value of
+    /// `first` so that `first`, `second`, and `third` form a
+    /// well-formed UTF-8 sequence.
+    second: UnconstrainedContinuation,
+    third: UnconstrainedContinuation,
 }
 
 impl ThreeByteSequence {
+    /// The number of bytes is this kind of UTF-8 sequence.
+    pub const LEN: usize = 3;
+
     /// Whether `prepared` forms a well-formed three-byte UTF-8 sequence.
     #[inline(always)]
     pub const fn is_with_prepared(prepared: PreparedThreeBytes) -> bool {
@@ -1300,15 +1306,14 @@ impl ThreeByteSequence {
     #[inline(always)]
     pub const unsafe fn new_unchecked(first: u8, second: u8, third: u8) -> Self {
         debug_assert!(Self::is(first, second, third));
-        // SAFETY: `first`, `second`, and `third` are non-ASCII per the safety invariant
-        // of this method.
+        // SAFETY: `first`, `second`, and `third` have values in the correct ranges per
+        // the safety invariant of this method.
         unsafe {
             Self {
-                bytes: [
-                    NonAscii::new_unchecked(first),
-                    NonAscii::new_unchecked(second),
-                    NonAscii::new_unchecked(third),
-                ],
+                first: LeadForThreeByte::new_unchecked(first),
+                // INVARIANT UPHELD: From the safety invariant of this method.
+                second: UnconstrainedContinuation::new_unchecked(second),
+                third: UnconstrainedContinuation::new_unchecked(third),
             }
         }
     }
@@ -1350,22 +1355,15 @@ impl ThreeByteSequence {
         UnconstrainedContinuation,
         UnconstrainedContinuation,
     ) {
-        // SAFETY: Re-interpretation is valid due to the invariant of `bytes`.
-        unsafe {
-            (
-                LeadForThreeByte::new_unchecked(self.bytes[0].to_u8()),
-                UnconstrainedContinuation::new_unchecked(self.bytes[1].to_u8()),
-                UnconstrainedContinuation::new_unchecked(self.bytes[2].to_u8()),
-            )
-        }
+        (self.first, self.second, self.third)
     }
 
     /// Convert to `char`
     #[inline(always)]
     pub const fn to_char(self) -> char {
-        let (first, second, third) = self.to_typed_bytes();
-        let scalar =
-            (first.low_four_u32() << 12) | (second.low_six_u32() << 6) | third.low_six_u32();
+        let scalar = (self.first.low_four_u32() << 12)
+            | (self.second.low_six_u32() << 6)
+            | self.third.low_six_u32();
         debug_assert!(char::from_u32(scalar).is_some());
         // SAFETY: We distribute the bits in a way that forms
         // a valid scalar on the assumption that the bytes represent
@@ -1373,29 +1371,43 @@ impl ThreeByteSequence {
         unsafe { char::from_u32_unchecked(scalar) }
     }
 
-    /// View as `&str`
-    #[inline(always)]
-    pub const fn as_str(&self) -> &str {
-        // SAFETY: The construction of this type maintains the
-        // invariant that `bytes` is a well-formed UTF-8 byte
-        // sequence.
-        unsafe { core::str::from_utf8_unchecked(cast_slice(&self.bytes)) }
-    }
+    sequence_methods!(
+        /// View as `&[u8]`
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// The bytes form a single well-formed three-byte UTF-8 sequence.
+        ,
+        /// View as `&str`
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// The string slice contains a single three-byte UTF-8 sequence.
+        ,
+    );
 }
 
 sequence_impls!(ThreeByteSequence, three_byte,);
 
 /// Four-byte UTF-8 sequence
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct FourByteSequence {
-    /// # Safety Usable Invariant
+    first: LeadForFourByte,
+    /// # Safety invariant
     ///
-    /// The value is a well-formed four-byte UTF-8 sequence.
-    bytes: [NonAscii; 4],
+    /// `second` must be in the correct range given the value of
+    /// `first` so that `first`, `second`, `third`, and `fourth`
+    /// form a well-formed UTF-8 sequence.
+    second: UnconstrainedContinuation,
+    third: UnconstrainedContinuation,
+    fourth: UnconstrainedContinuation,
 }
 
 impl FourByteSequence {
+    /// The number of bytes is this kind of UTF-8 sequence.
+    pub const LEN: usize = 4;
+
     /// Whether `prepared` and `fourth` form a well-formed four-byte UTF-8 sequence.
     #[inline(always)]
     pub const fn is_with_prepared(prepared: PreparedThreeBytes, fourth: u8) -> bool {
@@ -1434,16 +1446,15 @@ impl FourByteSequence {
     #[inline(always)]
     pub const unsafe fn new_unchecked(first: u8, second: u8, third: u8, fourth: u8) -> Self {
         debug_assert!(Self::is(first, second, third, fourth));
-        // SAFETY: `first`, `second`, `third`, and `fourth` are non-ASCII per the safety invariant
-        // of this method.
+        // SAFETY: `first`, `second`, `third`, and `fourth` have values in the correct ranges per
+        // the safety invariant of this method.
         unsafe {
             Self {
-                bytes: [
-                    NonAscii::new_unchecked(first),
-                    NonAscii::new_unchecked(second),
-                    NonAscii::new_unchecked(third),
-                    NonAscii::new_unchecked(fourth),
-                ],
+                first: LeadForFourByte::new_unchecked(first),
+                // INVARIANT UPHELD: From the safety invariant of this method.
+                second: UnconstrainedContinuation::new_unchecked(second),
+                third: UnconstrainedContinuation::new_unchecked(third),
+                fourth: UnconstrainedContinuation::new_unchecked(fourth),
             }
         }
     }
@@ -1494,25 +1505,16 @@ impl FourByteSequence {
         UnconstrainedContinuation,
         UnconstrainedContinuation,
     ) {
-        // SAFETY: Re-interpretation is valid due to the invariant of `bytes`.
-        unsafe {
-            (
-                LeadForFourByte::new_unchecked(self.bytes[0].to_u8()),
-                UnconstrainedContinuation::new_unchecked(self.bytes[1].to_u8()),
-                UnconstrainedContinuation::new_unchecked(self.bytes[2].to_u8()),
-                UnconstrainedContinuation::new_unchecked(self.bytes[3].to_u8()),
-            )
-        }
+        (self.first, self.second, self.third, self.fourth)
     }
 
     /// Convert to `char`
     #[inline(always)]
     pub const fn to_char(self) -> char {
-        let (first, second, third, fourth) = self.to_typed_bytes();
-        let scalar = (first.low_three_u32() << 18)
-            | (second.low_six_u32() << 12)
-            | (third.low_six_u32() << 6)
-            | fourth.low_six_u32();
+        let scalar = (self.first.low_three_u32() << 18)
+            | (self.second.low_six_u32() << 12)
+            | (self.third.low_six_u32() << 6)
+            | self.fourth.low_six_u32();
         debug_assert!(char::from_u32(scalar).is_some());
         // SAFETY: We distribute the bits in a way that forms
         // a valid scalar on the assumption that the bytes represent
@@ -1520,14 +1522,20 @@ impl FourByteSequence {
         unsafe { char::from_u32_unchecked(scalar) }
     }
 
-    /// View as `&str`
-    #[inline(always)]
-    pub const fn as_str(&self) -> &str {
-        // SAFETY: The construction of this type maintains the
-        // invariant that `bytes` is a well-formed UTF-8 byte
-        // sequence.
-        unsafe { core::str::from_utf8_unchecked(cast_slice(&self.bytes)) }
-    }
+    sequence_methods!(
+        /// View as `&[u8]`
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// The bytes form a single well-formed four-byte UTF-8 sequence.
+        ,
+        /// View as `&str`
+        ///
+        /// # Safety-usable invariant
+        ///
+        /// The string slice contains a single four-byte UTF-8 sequence.
+        ,
+    );
 }
 
 sequence_impls!(FourByteSequence, four_byte,);
@@ -1713,6 +1721,7 @@ mod tests {
 
             if let Ok(ascii) = Ascii::try_new(b) {
                 assert_eq!(ascii.to_char() as u32, b as u32);
+                assert_eq!(ascii.as_bytes(), &[b]);
                 assert_eq!(ascii.as_str().as_bytes(), &[b]);
             }
             if let Ok(non_ascii) = NonAscii::try_new(b) {
@@ -1811,6 +1820,7 @@ mod tests {
                     let ascii = Ascii::try_new(first).unwrap();
                     assert_eq!(ascii.to_char(), c);
                     assert_eq!(ascii.as_str(), s);
+                    assert_eq!(ascii.as_bytes(), s.as_bytes());
                 }
                 [first, second] => {
                     let sequence = TwoByteSequence::try_new(first, second).unwrap();
@@ -1823,6 +1833,7 @@ mod tests {
                     assert!(PreparedTwoBytes::new(first, second).sequence_prefix());
                     assert_eq!(sequence.to_char(), c);
                     assert_eq!(sequence.as_str(), s);
+                    assert_eq!(sequence.as_bytes(), s.as_bytes());
                     let (lead, continuation) = sequence.to_typed_bytes();
                     assert_eq!([lead.to_u8(), continuation.to_u8()], [first, second]);
                     assert!(previous_two < Some(sequence));
@@ -1838,6 +1849,7 @@ mod tests {
                     );
                     assert_eq!(sequence.to_char(), c);
                     assert_eq!(sequence.as_str(), s);
+                    assert_eq!(sequence.as_bytes(), s.as_bytes());
                     let (lead, c1, c2) = sequence.to_typed_bytes();
                     assert_eq!(
                         [lead.to_u8(), c1.to_u8(), c2.to_u8()],
@@ -1856,6 +1868,7 @@ mod tests {
                     );
                     assert_eq!(sequence.to_char(), c);
                     assert_eq!(sequence.as_str(), s);
+                    assert_eq!(sequence.as_bytes(), s.as_bytes());
                     let (lead, c1, c2, c3) = sequence.to_typed_bytes();
                     assert_eq!(
                         [lead.to_u8(), c1.to_u8(), c2.to_u8(), c3.to_u8()],
