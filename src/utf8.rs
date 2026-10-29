@@ -81,8 +81,8 @@ static UTF8_DATA: Utf8Data = Utf8Data {
             i += 1;
         }
 
-        // Leads
-        i = 0x80; // We don't cover ASCII for leads.
+        // Non-ASCII leads
+        i = 0x80;
         while i < 0x100 {
             let first = i as u8;
             let lane = match first {
@@ -107,6 +107,18 @@ static UTF8_DATA: Utf8Data = Utf8Data {
                 }
             };
             table[0x80 + first as usize] = lane;
+            i += 1;
+        }
+
+        // We didn't explicitly generate table entries that are
+        // looked up when `first` is ASCII. However, from the construction
+        // of the entries for trails, the overlapping part ends up with
+        // suitable values. Let's verify that.
+        i = 0;
+        while i < 0x80 {
+            if table[0x80 + i as usize] & (1 << 2) == 0 {
+                panic!();
+            }
             i += 1;
         }
 
@@ -1500,36 +1512,14 @@ impl PreparedTwoBytes {
         }
     }
 
-    /// If the caller has already determined that the first byte is not ASCII,
-    /// this method returns `true` iff the two bytes form a prefix of a
-    /// well-formed multi-byte UTF-8 sequence.
-    ///
-    /// If the first byte is ASCII, the return value is garbage.
-    ///
-    /// # Safety-usable invariant
-    ///
-    /// The caller may rely on the above-stated property for safety if it has
-    /// determined that the first byte is not ASCII.
-    ///
-    /// # Panics
-    ///
-    /// With debug assertions enabled, panics if the first byte is ASCII.
-    #[inline(always)]
-    pub const fn sequence_prefix_assuming_first_not_ascii(self) -> bool {
-        debug_assert!(!Ascii::is(self.first));
-        self.check == 0
-    }
-
     /// `true` iff the two bytes form a prefix of a
     /// well-formed multi-byte UTF-8 sequence.
     #[inline(always)]
     pub const fn sequence_prefix(self) -> bool {
         // The low two bits of `check` are zero in any case.
-        // We need to exclude the case where `first` is ASCII.
-        // To do that, invert its bits (so that the highest
-        // bit becomes one if `first` was ASCII) and then
-        // shift the highest bit to the lowest position.
-        ((!self.first) >> 7) | self.check == 0
+        // The high six bits are zero if this is a valid
+        // prefix for any multibyte sequence.
+        self.check == 0
     }
 }
 
@@ -1568,31 +1558,6 @@ impl PreparedThreeBytes {
         }
     }
 
-    /// If the caller has already determined that the first byte is not ASCII
-    /// and that the first two bytes do not form a well-formed two-byte UTF-8
-    /// sequence, this method returns `true` iff the three bytes form a prefix of a
-    /// well-formed three-byte or four-byte UTF-8 sequence.
-    ///
-    /// If the first byte is ASCII or if the first two bytes form a well-formed
-    /// two-byte UTF-8 sequence, the return value is garbage.
-    ///
-    /// # Safety-usable invariant
-    ///
-    /// The caller may rely on the above-stated property for safety if it has
-    /// determined that the first byte is not ASCII and that the first two
-    /// bytes don't form a well-formed two-byte UTF-8 sequence.
-    ///
-    /// # Panics
-    ///
-    /// With debug assertions enabled, panics if the first byte is ASCII or
-    /// if the first two bytes form a well-formed two-byte UTF-8 sequence.
-    #[inline(always)]
-    pub const fn sequence_prefix_assuming_not_well_formed_single_or_two_byte(self) -> bool {
-        debug_assert!(!Ascii::is(self.first));
-        debug_assert!(!TwoByteSequence::is(self.first, self.second));
-        self.check == 0b10
-    }
-
     /// Return `true` iff these three bytes represent a three-byte
     /// prefix of a well-formed four-byte UTF-8 sequence.
     #[inline(always)]
@@ -1623,26 +1588,6 @@ mod tests {
 
     fn two_byte_prefix_reference(first: u8, second: u8) -> bool {
         if !super::LeadForMultiByte::is(first) {
-            return false;
-        }
-        let (lower_bound, upper_bound) = match first {
-            0xE0 => (0xA0, 0xBF),
-            0xED => (0x80, 0x9F),
-            0xF0 => (0x90, 0xBF),
-            0xF4 => (0x80, 0x8F),
-            _ => (0x80, 0xBF),
-        };
-        lower_bound <= second && second <= upper_bound
-    }
-
-    fn three_byte_prefix_reference(first: u8, second: u8, third: u8) -> bool {
-        if !super::LeadForMultiByte::is(first) {
-            return false;
-        }
-        if super::LeadForTwoByte::is(first) {
-            return false;
-        }
-        if !super::UnconstrainedContinuation::is(third) {
             return false;
         }
         let (lower_bound, upper_bound) = match first {
@@ -1745,12 +1690,6 @@ mod tests {
                     prepared_two.sequence_prefix(),
                     two_byte_prefix_reference(first, second)
                 );
-                if first >= 0x80 {
-                    assert_eq!(
-                        prepared_two.sequence_prefix_assuming_first_not_ascii(),
-                        two_byte_prefix_reference(first, second)
-                    );
-                }
 
                 for third in 0..=0xFF {
                     let prepared_three = PreparedThreeBytes::new(first, second, third);
@@ -1758,13 +1697,6 @@ mod tests {
                         prepared_three,
                         PreparedThreeBytes::new_with_prepared(prepared_two, third)
                     );
-                    if first >= 0x80 && !LeadForTwoByte::is(first) {
-                        assert_eq!(
-                            prepared_three
-                                .sequence_prefix_assuming_not_well_formed_single_or_two_byte(),
-                            three_byte_prefix_reference(first, second, third)
-                        );
-                    }
                     assert_eq!(
                         prepared_three.prefix_of_four_byte(),
                         prefix_of_four_byte_reference(first, second, third)
@@ -1832,8 +1764,6 @@ mod tests {
                         )),
                         Ok(sequence)
                     );
-                    assert!(PreparedThreeBytes::new(first, second, third)
-                        .sequence_prefix_assuming_not_well_formed_single_or_two_byte());
                     assert_eq!(sequence.to_char(), c);
                     assert_eq!(sequence.as_str(), s);
                     let (lead, c1, c2) = sequence.to_typed_bytes();
